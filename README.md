@@ -5,7 +5,10 @@ Notebooks and model files used during the Symple Flopy course.
 
 These are a work in progress.
 
-# Notebooks
+# docs
+ - **2021-06-25_SGN_model_DRAFT2.docx**: Describes the SGN case and model setup used in the PEST module.
+
+# notebooks
 
  - **sgn-model-1layer**:<br>
  This version will be used during the lectures. I split it up into several notebooks to make each phase bite-sized and to take the oportunity to demonstrate how to load & edit existing models.
@@ -16,8 +19,5 @@ These are a work in progress.
    - all three steps as per the 1layer model, all in the same notebook. This will probably be left as an example notebook, but not covered in the lectures. (fyi: takes a while to run the notebook).
 
 
-# Data
-## sgn
-Contains files used to construct the SGN model.<br>
-Calibration targets are in:<br>
-*..\data\sgn\shp\Target_L1_sept2019_head_PCE.shp*
+# data
+ - **sgn**: Contains files used to construct the SGN model. **Calibration targets** are in: *..\data\sgn\shp\Target_L1_sept2019_head_PCE.shp*
