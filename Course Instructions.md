@@ -20,6 +20,7 @@ To keep things simple for the course, we will focsu on MOFLOW 6. Once the you ar
  - Some additional topics:
    - setting up the BUY package for density-coupled flow and transport
    - configuring multilayer wells with the MAW package
+   - partice tracking
 
 ## Pre-requisites
  - Basic understanding of Python 
