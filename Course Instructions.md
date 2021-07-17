@@ -45,6 +45,6 @@ You can do this in one of two ways.
 **Start jupyter notebook**
 You will need to do this step any time you wish to open one of the course notebooks.
  - In Windows, open the Anaconda prompt. In Mac/Linux, open a terminal. Then, type "conda activate symple"
- - Next, navigate to the course materials reposiotry folder and type "jupyter notebook". A jupyter notebook instance should start within the course repo flder. You can now navigate to the "notebooks" folder and open one.
+ - Next, in the Anaconda prompt or terminal, navigate to the course materials reposiotry folder and type "jupyter notebook". A jupyter notebook instance should start within the course repo flder. Using the browser, you can now navigate to the "notebooks" folder and open one.
  
  
