@@ -1,0 +1,145 @@
+simulation:
+  sim_name: sgn_50_sim
+  sim_ws: ../../models/sgn_mfsetup
+  version: mf6
+  options:
+    continue: true
+
+model:
+  external_path: ./
+  modelname: sgn_50
+  options:
+    newton: true
+    newton_under_relaxation: true
+    print_input: true
+    save_flows: true
+  packages:
+  - dis
+  - ims
+  - ic
+  - wel
+  - oc
+  - npf
+  - rch
+  - sfr
+  relative_external_filepaths: true
+  simulation: sgn_50_sim
+intermediate_data:
+  output_folder: original/
+setup_grid:
+  epsg: 3003
+  rotation: 14.0
+  xoff: 1517927.496282395
+  yoff: 5028909.73961192
+dis:
+  dimensions:
+    ncol: 83
+    nlay: 3
+    nrow: 96
+  drop_thin_cells: true
+  griddata:
+    delc: 50
+    delr: 50
+  minimum_layer_thickness: 1.0
+  options:
+    length_units: meters
+  remake_top: true
+  source_data:
+    botm:
+      elevation_units: meters
+      filenames:
+        0: ../../data/sgn/raster/Bott_L1_fix.tif
+        1: ../../data/sgn/raster/Bott_L2_fix.tif
+        2: ../../data/sgn/raster/Bott_L3_fix.tif
+    top:
+      elevation_units: meters
+      filename: ../../data/sgn/raster/DTM_domain.tif
+tdis:
+  options:
+    start_date_time: '2021-01-01'
+    time_units: seconds
+  perioddata:
+    perlen: 3.154e+7
+    nper: 1
+    nstp: 1
+    steady: true
+    tsmult: 1
+ic:
+  strt_filename_fmt: ../../data/sgn/raster/DTM_domain.tif
+wel:
+  options:
+    print_flows: true
+    print_input: true
+    save_flows: true
+  source_data:
+    csvfiles:
+      data_column: q
+      datetime_column: datetime
+      end_datetime_column: enddatetime
+      filenames:
+      - ../../data/sgn/wells_nonzero.csv
+      id_column: boundname
+      period_stats:
+        0:
+        - mean
+        - '2020-12-31'
+        - '2022-01-01'
+      time_units: seconds
+      vertical_flux_distribution:
+        across_layers: false
+        distribute_by: transmissivity
+        screen_botm_col: screen_botm
+        screen_top_col: screen_top
+      volume_units: meters
+oc:
+  budget_fileout_fmt: '{}.cbc'
+  head_fileout_fmt: '{}.hds'
+  saverecord:
+    0:
+      budget: last
+      head: last
+npf:
+  source_data:
+    k:
+      filenames:
+        0: ../../data/sgn/raster/k_field0.tif
+        1: ../../data/sgn/raster/k_field1.tif
+        2: ../../data/sgn/raster/k_field2.tif
+rch:
+  options:
+    print_flows: false
+    print_output: true
+    readasarrays: true
+    save_flows: true
+  source_data:
+    recharge:
+      filenames:
+        0: ../../data/sgn/raster/rch.tif
+      length_units: millimeters
+      period_stats:
+        0:
+        - mean
+        - '2020-12-31'
+        - '2022-01-01'
+      time_units: years
+sfr:
+  set_streambed_top_elevations_from_dem: true
+  source_data:
+    dem:
+      elevation_units: meters
+      filename: ../../data/sgn/raster/DTM_domain.tif
+    flowlines:
+      filename: ../../data/sgn/shp/River_Lambro_segmented.shp
+      id_column: segname
+      routing_column: to_id
+      width1: streamwid
+      width2: streamwid
+ims:
+  linear:
+    inner_dvclose: 1.0e-05
+  nonlinear:
+    outer_dvclose: 0.01
+  options:
+    complexity: moderate
+    continue: true
+    print_options: all
