@@ -9,7 +9,6 @@ import json
 import numpy as np
 import os
 import warnings
-from collections import OrderedDict
 
 from ..datbase import DataType, DataInterface
 from ..utils import Util3d
@@ -144,7 +143,7 @@ def write_grid_shapefile(
     elif mg.grid_type == "unstructured":
         verts = [mg.get_cell_vertices(cellid) for cellid in range(mg.nnodes)]
     else:
-        raise Exception("Grid type {} not supported.".format(mg.grid_type))
+        raise Exception(f"Grid type {mg.grid_type} not supported.")
 
     # set up the attribute fields and arrays of attributes
     if mg.grid_type == "structured":
@@ -180,15 +179,35 @@ def write_grid_shapefile(
         names = enforce_10ch_limit(names)
 
     elif mg.grid_type == "unstructured":
-        names = ["node"] + list(array_dict.keys())
-        dtypes = [("node", np.dtype("int"))] + [
-            (enforce_10ch_limit([name])[0], array_dict[name].dtype)
-            for name in names[1:]
-        ]
-        node = list(range(1, mg.nnodes + 1))
-        at = np.vstack(
-            [node] + [array_dict[name].ravel() for name in names[1:]]
-        ).transpose()
+        if mg.nlay is None:
+            names = ["node"] + list(array_dict.keys())
+            dtypes = [("node", np.dtype("int"))] + [
+                (enforce_10ch_limit([name])[0], array_dict[name].dtype)
+                for name in names[1:]
+            ]
+            node = list(range(1, mg.nnodes + 1))
+            at = np.vstack(
+                [node] + [array_dict[name].ravel() for name in names[1:]]
+            ).transpose()
+        else:
+            names = ["node", "layer"] + list(array_dict.keys())
+            dtypes = [
+                ("node", np.dtype("int")),
+                ("layer", np.dtype("int")),
+            ] + [
+                (enforce_10ch_limit([name])[0], array_dict[name].dtype)
+                for name in names[2:]
+            ]
+            node = list(range(1, mg.nnodes + 1))
+            layer = np.zeros(mg.nnodes)
+            for ilay in range(mg.nlay):
+                istart, istop = mg.get_layer_node_range(ilay)
+                layer[istart:istop] = ilay + 1
+            at = np.vstack(
+                [node]
+                + [layer]
+                + [array_dict[name].ravel() for name in names[2:]]
+            ).transpose()
 
         names = enforce_10ch_limit(names)
 
@@ -213,7 +232,7 @@ def write_grid_shapefile(
 
     # close
     w.close()
-    print("wrote {}".format(filename))
+    print(f"wrote {filename}")
     # write the projection file
     write_prj(filename, mg, epsg, prj)
     return
@@ -275,11 +294,6 @@ def model_attributes_to_shapefile(
     else:
         grid = ml.modelgrid
 
-    if grid.grid_type == "USG-Unstructured":
-        raise Exception(
-            "Flopy does not support exporting to shapefile from "
-            "and MODFLOW-USG unstructured grid."
-        )
     horz_shape = grid.get_plottable_layer_shape()
     for pname in package_names:
         pak = ml.get_package(pname)
@@ -310,16 +324,22 @@ def model_attributes_to_shapefile(
                         assert a.array is not None
                     except:
                         print(
-                            "Failed to get data for {} array, {} package".format(
-                                a.name, pak.name[0]
-                            )
+                            "Failed to get data for "
+                            f"{a.name} array, {pak.name[0]} package"
                         )
                         continue
                     if isinstance(a.name, list) and a.name[0] == "thickness":
                         continue
 
                     if a.array.shape == horz_shape:
-                        array_dict[a.name] = a.array
+                        if hasattr(a, "shape"):
+                            if a.shape[1] is None:  # usg unstructured Util3d
+                                # return a flattened array, with a.name[0] (a per-layer list)
+                                array_dict[a.name[0]] = a.array
+                            else:
+                                array_dict[a.name] = a.array
+                        else:
+                            array_dict[a.name] = a.array
                     else:
                         # array is not the same shape as the layer shape
                         for ilay in range(a.array.shape[0]):
@@ -337,7 +357,7 @@ def model_attributes_to_shapefile(
                                 # fix for mf6 case
                                 arr = arr[0]
                             assert arr.shape == horz_shape
-                            name = "{}_{}".format(aname, ilay + 1)
+                            name = f"{aname}_{ilay + 1}"
                             array_dict[name] = arr
                 elif (
                     a.data_type == DataType.transient2d
@@ -347,13 +367,12 @@ def model_attributes_to_shapefile(
                         assert a.array is not None
                     except:
                         print(
-                            "Failed to get data for {} array, {} package".format(
-                                a.name, pak.name[0]
-                            )
+                            "Failed to get data for "
+                            f"{a.name} array, {pak.name[0]} package"
                         )
                         continue
                     for kper in range(a.array.shape[0]):
-                        name = "{}{}".format(shape_attr_name(a.name), kper + 1)
+                        name = f"{shape_attr_name(a.name)}{kper + 1}"
                         arr = a.array[kper][0]
                         assert arr.shape == horz_shape
                         array_dict[name] = arr
@@ -368,7 +387,7 @@ def model_attributes_to_shapefile(
                         for kper in range(array.shape[0]):
                             for k in range(array.shape[1]):
                                 n = shape_attr_name(name, length=4)
-                                aname = "{}{}{}".format(n, k + 1, kper + 1)
+                                aname = f"{n}{k + 1}{kper + 1}"
                                 arr = array[kper][k]
                                 assert arr.shape == horz_shape
                                 if np.all(np.isnan(arr)):
@@ -382,9 +401,8 @@ def model_attributes_to_shapefile(
                         ):
                             for ilay in range(a.model.modelgrid.nlay):
                                 u2d = a[ilay]
-                                name = "{}_{}".format(
-                                    shape_attr_name(u2d.name),
-                                    ilay + 1,
+                                name = (
+                                    f"{shape_attr_name(u2d.name)}_{ilay + 1}"
                                 )
                                 arr = u2d.array
                                 assert arr.shape == horz_shape
@@ -538,7 +556,7 @@ def recarray2shp(
     mg=None,
     epsg=None,
     prj=None,
-    **kwargs
+    **kwargs,
 ):
     """
     Write a numpy record array to a shapefile, using a corresponding
@@ -625,7 +643,7 @@ def recarray2shp(
 
     w.close()
     write_prj(shpname, mg, epsg, prj)
-    print("wrote {}".format(shpname))
+    print(f"wrote {shpname}")
     return
 
 
@@ -850,7 +868,7 @@ class CRS:
 
     def _getgcsparam(self, txt):
         nvalues = 3 if txt.lower() == "spheroid" else 2
-        tmp = self._gettxt('{}["'.format(txt), "]")
+        tmp = self._gettxt(f'{txt}["', "]")
         if tmp is not None:
             tmp = tmp.replace('"', "").split(",")
             name = tmp[0:1]
@@ -916,29 +934,30 @@ class CRS:
         """
         from flopy.utils.flopy_io import get_url_text
 
-        epsg_categories = ["epsg", "esri"]
+        epsg_categories = (
+            "epsg",
+            "esri",
+        )
+        urls = []
         for cat in epsg_categories:
-            url = "{}/ref/".format(srefhttp) + "{}/{}/{}/".format(
-                cat, epsg, text
-            )
+            url = f"{srefhttp}/ref/{cat}/{epsg}/{text}/"
+            urls.append(url)
             result = get_url_text(url)
             if result is not None:
                 break
         if result is not None:
             return result.replace("\n", "")
         elif result is None and text != "epsg":
-            for cat in epsg_categories:
-                error_msg = (
-                    "No internet connection or "
-                    + "epsg code {} ".format(epsg)
-                    + "not found at {}/ref/".format(srefhttp)
-                    + "{}/{}/{}".format(cat, epsg, text)
-                )
-                print(error_msg)
+            error_msg = (
+                f"No internet connection or epsg code {epsg} not found at:\n"
+            )
+            for idx, url in enumerate(urls):
+                error_msg += f"  {idx + 1:>2d}: {url}\n"
+            print(error_msg)
         # epsg code not listed on spatialreference.org
         # may still work with pyproj
         elif text == "epsg":
-            return "epsg:{}".format(epsg)
+            return f"epsg:{epsg}"
 
     @staticmethod
     def getproj4(epsg):
@@ -987,10 +1006,10 @@ class EpsgReference:
         """
         returns dict with EPSG code integer key, and WKT CRS text
         """
-        data = OrderedDict()
+        data = {}
         if os.path.exists(self.location):
             with open(self.location, "r") as f:
-                loaded_data = json.load(f, object_pairs_hook=OrderedDict)
+                loaded_data = json.load(f)
             # convert JSON key from str to EPSG integer
             for key, value in loaded_data.items():
                 try:
@@ -1007,10 +1026,10 @@ class EpsgReference:
     def reset(self, verbose=True):
         if os.path.exists(self.location):
             if verbose:
-                print("Resetting {}".format(self.location))
+                print(f"Resetting {self.location}")
             os.remove(self.location)
         elif verbose:
-            print("{} does not exist, no reset required".format(self.location))
+            print(f"{self.location} does not exist, no reset required")
 
     def add(self, epsg, prj):
         """
@@ -1041,4 +1060,4 @@ class EpsgReference:
         ep = EpsgReference()
         prj = ep.to_dict()
         for k, v in prj.items():
-            print("{}:\n{}\n".format(k, v))
+            print(f"{k}:\n{v}\n")

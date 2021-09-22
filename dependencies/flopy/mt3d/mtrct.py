@@ -1,4 +1,3 @@
-import sys
 import numpy as np
 from ..pakbase import Package
 from ..utils import Util3d
@@ -173,7 +172,7 @@ class Mt3dRct(Package):
         extension="rct",
         unitnumber=None,
         filenames=None,
-        **kwargs
+        **kwargs,
     ):
         """
         Package constructor.
@@ -263,16 +262,14 @@ class Mt3dRct(Package):
         self.srconc.append(u3d)
         if ncomp > 1:
             for icomp in range(2, ncomp + 1):
-                name = "srconc" + str(icomp)
+                name = f"srconc{icomp}"
                 val = 0.0
                 if name in kwargs:
                     val = kwargs.pop(name)
                 else:
                     print(
-                        "RCT: setting srconc for component "
-                        + str(icomp)
-                        + " to zero, kwarg name "
-                        + name
+                        f"RCT: setting srconc for component {icomp} to zero, "
+                        f"kwarg name {name}"
                     )
                 u3d = Util3d(
                     model,
@@ -301,16 +298,14 @@ class Mt3dRct(Package):
         self.sp1.append(u3d)
         if ncomp > 1:
             for icomp in range(2, ncomp + 1):
-                name = "sp1" + str(icomp)
+                name = f"sp1{icomp}"
                 val = 0.0
                 if name in kwargs:
                     val = kwargs.pop(name)
                 else:
                     print(
-                        "RCT: setting sp1 for component "
-                        + str(icomp)
-                        + " to zero, kwarg name "
-                        + name
+                        "RCT: setting sp1 for component {} to zero, "
+                        "kwarg name {}".format(icomp, name)
                     )
                 u3d = Util3d(
                     model,
@@ -339,16 +334,14 @@ class Mt3dRct(Package):
         self.sp2.append(u3d)
         if ncomp > 1:
             for icomp in range(2, ncomp + 1):
-                name = "sp2" + str(icomp)
+                name = f"sp2{icomp}"
                 val = 0.0
                 if name in kwargs:
                     val = kwargs.pop(name)
                 else:
                     print(
-                        "RCT: setting sp2 for component "
-                        + str(icomp)
-                        + " to zero, kwarg name "
-                        + name
+                        "RCT: setting sp2 for component {} to zero, "
+                        "kwarg name {}".format(icomp, name)
                     )
                 u3d = Util3d(
                     model,
@@ -377,16 +370,14 @@ class Mt3dRct(Package):
         self.rc1.append(u3d)
         if ncomp > 1:
             for icomp in range(2, ncomp + 1):
-                name = "rc1" + str(icomp)
+                name = f"rc1{icomp}"
                 val = 0.0
                 if name in kwargs:
                     val = kwargs.pop(name)
                 else:
                     print(
-                        "RCT: setting rc1 for component "
-                        + str(icomp)
-                        + " to zero, kwarg name "
-                        + name
+                        "RCT: setting rc1 for component {} to zero, "
+                        "kwarg name {}".format(icomp, name)
                     )
                 u3d = Util3d(
                     model,
@@ -415,16 +406,14 @@ class Mt3dRct(Package):
         self.rc2.append(u3d)
         if ncomp > 1:
             for icomp in range(2, ncomp + 1):
-                name = "rc2" + str(icomp)
+                name = f"rc2{icomp}"
                 val = 0.0
                 if name in kwargs:
                     val = kwargs.pop(name)
                 else:
                     print(
-                        "RCT: setting rc2 for component "
-                        + str(icomp)
-                        + " to zero, kwarg name "
-                        + name
+                        "RCT: setting rc2 for component {} to zero, "
+                        "kwarg name {}".format(icomp, name)
                     )
                 u3d = Util3d(
                     model,
@@ -542,7 +531,7 @@ class Mt3dRct(Package):
         """
 
         if model.verbose:
-            sys.stdout.write("loading rct package file...\n")
+            print("loading rct package file...")
 
         # Open file, if necessary
         openfile = not hasattr(f, "read")
@@ -578,10 +567,10 @@ class Mt3dRct(Package):
         except:
             igetsc = 0
         if model.verbose:
-            print("   ISOTHM {}".format(isothm))
-            print("   IREACT {}".format(ireact))
-            print("   IRCTOP {}".format(irctop))
-            print("   IGETSC {}".format(igetsc))
+            print(f"   ISOTHM {isothm}")
+            print(f"   IREACT {ireact}")
+            print(f"   IRCTOP {irctop}")
+            print(f"   IGETSC {igetsc}")
 
         # Item E2A: RHOB
         rhob = None
@@ -598,7 +587,7 @@ class Mt3dRct(Package):
                 array_format="mt3d",
             )
             if model.verbose:
-                print("   RHOB {}".format(rhob))
+                print(f"   RHOB {rhob}")
 
         # Item E2A: PRSITY2
         prsity2 = None
@@ -615,7 +604,7 @@ class Mt3dRct(Package):
                 array_format="mt3d",
             )
             if model.verbose:
-                print("   PRSITY2 {}".format(prsity2))
+                print(f"   PRSITY2 {prsity2}")
 
         # Item E2C: SRCONC
         srconc = None
@@ -632,12 +621,12 @@ class Mt3dRct(Package):
                 array_format="mt3d",
             )
             if model.verbose:
-                print("   SRCONC {}".format(srconc))
+                print(f"   SRCONC {srconc}")
             if ncomp > 1:
                 for icomp in range(2, ncomp + 1):
-                    name = "srconc" + str(icomp)
+                    name = f"srconc{icomp}"
                     if model.verbose:
-                        print("   loading {}...".format(name))
+                        print(f"   loading {name}...")
                     u3d = Util3d.load(
                         f,
                         model,
@@ -649,7 +638,7 @@ class Mt3dRct(Package):
                     )
                     kwargs[name] = u3d
                     if model.verbose:
-                        print("   SRCONC{} {}".format(icomp, u3d))
+                        print(f"   SRCONC{icomp} {u3d}")
 
         # Item E3: SP1
         sp1 = None
@@ -666,12 +655,12 @@ class Mt3dRct(Package):
                 array_format="mt3d",
             )
             if model.verbose:
-                print("   SP1 {}".format(sp1))
+                print(f"   SP1 {sp1}")
             if ncomp > 1:
                 for icomp in range(2, ncomp + 1):
-                    name = "sp1" + str(icomp)
+                    name = f"sp1{icomp}"
                     if model.verbose:
-                        print("   loading {}...".format(name))
+                        print(f"   loading {name}...")
                     u3d = Util3d.load(
                         f,
                         model,
@@ -683,7 +672,7 @@ class Mt3dRct(Package):
                     )
                     kwargs[name] = u3d
                     if model.verbose:
-                        print("   SP1{} {}".format(icomp, u3d))
+                        print(f"   SP1{icomp} {u3d}")
 
         # Item E4: SP2
         sp2 = None
@@ -700,12 +689,12 @@ class Mt3dRct(Package):
                 array_format="mt3d",
             )
             if model.verbose:
-                print("   SP2 {}".format(sp2))
+                print(f"   SP2 {sp2}")
             if ncomp > 1:
                 for icomp in range(2, ncomp + 1):
-                    name = "sp2" + str(icomp)
+                    name = f"sp2{icomp}"
                     if model.verbose:
-                        print("   loading {}...".format(name))
+                        print(f"   loading {name}...")
                     u3d = Util3d.load(
                         f,
                         model,
@@ -717,7 +706,7 @@ class Mt3dRct(Package):
                     )
                     kwargs[name] = u3d
                     if model.verbose:
-                        print("   SP2{} {}".format(icomp, u3d))
+                        print(f"   SP2{icomp} {u3d}")
 
         # Item E5: RC1
         rc1 = None
@@ -734,12 +723,12 @@ class Mt3dRct(Package):
                 array_format="mt3d",
             )
             if model.verbose:
-                print("   RC1 {}".format(rc1))
+                print(f"   RC1 {rc1}")
             if ncomp > 1:
                 for icomp in range(2, ncomp + 1):
-                    name = "rc1" + str(icomp)
+                    name = f"rc1{icomp}"
                     if model.verbose:
-                        print("   loading {}...".format(name))
+                        print(f"   loading {name}...")
                     u3d = Util3d.load(
                         f,
                         model,
@@ -751,7 +740,7 @@ class Mt3dRct(Package):
                     )
                     kwargs[name] = u3d
                     if model.verbose:
-                        print("   RC1{} {}".format(icomp, u3d))
+                        print(f"   RC1{icomp} {u3d}")
 
         # Item E6: RC2
         rc2 = None
@@ -768,12 +757,12 @@ class Mt3dRct(Package):
                 array_format="mt3d",
             )
             if model.verbose:
-                print("   RC2 {}".format(rc2))
+                print(f"   RC2 {rc2}")
             if ncomp > 1:
                 for icomp in range(2, ncomp + 1):
-                    name = "rc2" + str(icomp)
+                    name = f"rc2{icomp}"
                     if model.verbose:
-                        print("   loading {}...".format(name))
+                        print(f"   loading {name}...")
                     u3d = Util3d.load(
                         f,
                         model,
@@ -785,7 +774,7 @@ class Mt3dRct(Package):
                     )
                     kwargs[name] = u3d
                     if model.verbose:
-                        print("   RC2{} {}".format(icomp, u3d))
+                        print(f"   RC2{icomp} {u3d}")
 
         if openfile:
             f.close()
@@ -813,7 +802,7 @@ class Mt3dRct(Package):
             rc2=rc2,
             unitnumber=unitnumber,
             filenames=filenames,
-            **kwargs
+            **kwargs,
         )
 
     @staticmethod

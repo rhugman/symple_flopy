@@ -2,7 +2,6 @@ import glob
 import importlib
 import inspect, sys, traceback
 import os, copy
-from collections import OrderedDict
 from collections.abc import Iterable
 from shutil import copyfile
 from enum import Enum
@@ -14,20 +13,12 @@ class MFInvalidTransientBlockHeaderException(Exception):
     Exception occurs when parsing a transient block header
     """
 
-    def __init__(self, error):
-        Exception.__init__(
-            self, "MFInvalidTransientBlockHeaderException: {}".format(error)
-        )
-
 
 class ReadAsArraysException(Exception):
     """
     Exception occurs when loading ReadAsArrays package as non-ReadAsArrays
     package.
     """
-
-    def __init__(self, error):
-        Exception.__init__(self, "ReadAsArraysException: {}".format(error))
 
 
 # external exceptions for users
@@ -38,9 +29,7 @@ class FlopyException(Exception):
 
     def __init__(self, error, location=""):
         self.message = error
-        Exception.__init__(
-            self, "FlopyException: {} ({})".format(error, location)
-        )
+        super().__init__(f"{error} ({location})")
 
 
 class StructException(Exception):
@@ -50,9 +39,7 @@ class StructException(Exception):
 
     def __init__(self, error, location):
         self.message = error
-        Exception.__init__(
-            self, "StructException: {} ({})".format(error, location)
-        )
+        super().__init__(f"{error} ({location})")
 
 
 class MFDataException(Exception):
@@ -137,37 +124,21 @@ class MFDataException(Exception):
             self.org_type, self.org_value, self.org_traceback
         )
         # build error string
-        error_message_0 = "An error occurred in "
+        error_message = "An error occurred in "
         if self.data_element is not None and self.data_element != "":
-            error_message_1 = 'data element "{}"' " ".format(self.data_element)
-        else:
-            error_message_1 = ""
+            error_message += f'data element "{self.data_element}" '
         if self.model is not None and self.model != "":
-            error_message_2 = 'model "{}" '.format(self.model)
-        else:
-            error_message_2 = ""
-        error_message_3 = 'package "{}".'.format(self.package)
-        error_message_4 = (
-            ' The error occurred while {} in the "{}" method'
-            ".".format(self.current_process, self.method_caught_in)
+            error_message += f'model "{self.model}" '
+        error_message += (
+            f'package "{self.package}". The error occurred while '
+            f'{self.current_process} in the "{self.method_caught_in}" method.'
         )
         if len(self.messages) > 0:
-            error_message_5 = "\nAdditional Information:\n"
-            for index, message in enumerate(self.messages):
-                error_message_5 = "{}({}) {}\n".format(
-                    error_message_5, index + 1, message
-                )
-        else:
-            error_message_5 = ""
-        error_message = "{}{}{}{}{}{}".format(
-            error_message_0,
-            error_message_1,
-            error_message_2,
-            error_message_3,
-            error_message_4,
-            error_message_5,
-        )
-        Exception.__init__(self, error_message)
+            error_message += "\nAdditional Information:\n"
+            error_message += "\n".join(
+                f"({idx}) {msg}" for (idx, msg) in enumerate(self.messages, 1)
+            )
+        super().__init__(error_message)
 
 
 class VerbosityLevel(Enum):
@@ -221,7 +192,7 @@ class MFFileMgmt:
     Attributes
     ----------
 
-    model_relative_path : OrderedDict
+    model_relative_path : dict
         Dictionary of relative paths to each model folder
 
     """
@@ -235,10 +206,10 @@ class MFFileMgmt:
         self.existing_file_dict = {}
         # keys:filenames,vals:instance name
 
-        self.model_relative_path = OrderedDict()
+        self.model_relative_path = {}
 
         self._last_loaded_sim_path = None
-        self._last_loaded_model_relative_path = OrderedDict()
+        self._last_loaded_model_relative_path = {}
 
     def copy_files(self, copy_relative_only=True):
         """Copy files external to updated path.
@@ -325,9 +296,9 @@ class MFFileMgmt:
     def _build_file(file_name, num):
         file, ext = os.path.splitext(file_name)
         if ext:
-            return "{}_{}{}".format(file, num, ext)
+            return f"{file}_{num}{ext}"
         else:
-            return "{}_{}".format(file, num)
+            return f"{file}_{num}"
 
     @staticmethod
     def string_to_file_path(fp_string):
@@ -339,9 +310,7 @@ class MFFileMgmt:
             arr_string = new_string.split(delimiter)
             if len(arr_string) > 1:
                 if os.path.isabs(fp_string):
-                    new_string = "{}{}{}".format(
-                        arr_string[0], delimiter, arr_string[1]
-                    )
+                    new_string = f"{arr_string[0]}{delimiter}{arr_string[1]}"
                 else:
                     new_string = os.path.join(arr_string[0], arr_string[1])
                 if len(arr_string) > 2:
@@ -512,8 +481,8 @@ class PackageContainer:
             package : MFPackage subclass
 
         """
-        package_abbr = "{}{}".format(model_type, package_type)
-        package_utl_abbr = "utl{}".format(package_type)
+        package_abbr = f"{model_type}{package_type}"
+        package_utl_abbr = f"utl{package_type}"
         package_list = []
         # iterate through python files
         package_file_paths = PackageContainer.get_package_file_paths()
@@ -592,16 +561,12 @@ class PackageContainer:
         internal FloPy use only, not intended for end users."""
         package_file_name = os.path.basename(package_file_path)
         module_path = os.path.splitext(package_file_name)[0]
-        module_name = "{}{}{}".format(
-            "Modflow", module_path[2].upper(), module_path[3:]
-        )
+        module_name = f"Modflow{module_path[2].upper()}{module_path[3:]}"
         if module_name.startswith("__"):
             return None
 
         # import
-        return importlib.import_module(
-            "flopy.mf6.modflow.{}".format(module_path)
-        )
+        return importlib.import_module(f"flopy.mf6.modflow.{module_path}")
 
     @staticmethod
     def get_package_file_paths():
@@ -659,6 +624,37 @@ class PackageContainer:
         # remove items from main dictionary
         for key in items_to_remove:
             del self.simulation_data.mfdata[key]
+
+    def _rename_package(self, package, new_name):
+        # fix package_name_dict key
+        if (
+            package.package_name is not None
+            and package.package_name.lower() in self.package_name_dict
+        ):
+            del self.package_name_dict[package.package_name.lower()]
+        self.package_name_dict[new_name.lower()] = package
+        # fix package_key_dict key
+        new_package_path = package.path[:-1] + (new_name,)
+        del self.package_key_dict[package.path[-1].lower()]
+        self.package_key_dict[new_package_path.lower()] = package
+        # get keys to fix in main dictionary
+        main_dict = self.simulation_data.mfdata
+        items_to_fix = []
+        for key in main_dict:
+            is_subkey = True
+            for pitem, ditem in zip(package.path, key):
+                if pitem != ditem:
+                    is_subkey = False
+                    break
+            if is_subkey:
+                items_to_fix.append(key)
+
+        # fix keys in main dictionary
+        for key in items_to_fix:
+            new_key = (
+                package.path[:-1] + (new_name,) + key[len(package.path) - 1 :]
+            )
+            main_dict[new_key] = main_dict.pop(key)
 
     def get_package(self, name=None):
         """

@@ -1420,7 +1420,7 @@ class Pst(object):
         if len(fixed) > 0:
             raise Exception(
                 "Pst.add_pi_equation(): the following pars "
-                + " were are fixed/tied: {0}".format(",".join(missing))
+                + " were are fixed/tied: {0}".format(",".join(fixed))
             )
         eqs_str = ""
         sign = ""
@@ -1507,8 +1507,12 @@ class Pst(object):
                 + "\n"
             )
 
-    def sanity_checks(self):
+    def sanity_checks(self, forgive=False):
         """some basic check for strangeness
+
+        Args:
+            forgive (`bool`): flag to forgive (warn) for issues.  Default is False
+
 
         Note:
             checks for duplicate names, atleast 1 adjustable parameter
@@ -1527,23 +1531,57 @@ class Pst(object):
         dups = self.parameter_data.parnme.value_counts()
         dups = dups.loc[dups > 1]
         if dups.shape[0] > 0:
-            warnings.warn(
-                "duplicate parameter names: {0}".format(",".join(list(dups.index))),
-                PyemuWarning,
-            )
+            if forgive:
+                warnings.warn(
+                    "duplicate parameter names: {0}".format(",".join(list(dups.index))),
+                    PyemuWarning,
+                )
+            else:
+                raise Exception("Pst.sanity_check() error: duplicate parameter names: {0}".format(",".join(list(dups.index))))
+
         dups = self.observation_data.obsnme.value_counts()
         dups = dups.loc[dups > 1]
         if dups.shape[0] > 0:
-            warnings.warn(
-                "duplicate observation names: {0}".format(",".join(list(dups.index))),
-                PyemuWarning,
-            )
+            if forgive:
+                warnings.warn(
+                    "duplicate observation names: {0}".format(",".join(list(dups.index))),
+                    PyemuWarning,
+                )
+            else:
+                raise Exception(
+                    "Pst.sanity_check() error: duplicate observation names: {0}".format(",".join(list(dups.index))))
 
         if self.npar_adj == 0:
             warnings.warn("no adjustable pars", PyemuWarning)
 
         if self.nnz_obs == 0:
             warnings.warn("no non-zero weight obs", PyemuWarning)
+
+        if self.tied is not None and len(self.tied) > 0:
+            sadj = set(self.adj_par_names)
+            spar = set(self.par_names)
+
+            tpar_dict = self.parameter_data.partied.to_dict()
+
+            for tpar,ptied in tpar_dict.items():
+                if pd.isna(ptied):
+                    continue
+                if tpar == ptied:
+                    if forgive:
+                        warnings.warn("tied parameter '{0}' tied to itself".format(tpar),PyemuWarning)
+                    else:
+                        raise Exception("Pst.sanity_check() error: tied parameter '{0}' tied to itself".format(tpar))
+                elif ptied not in spar:
+                    if forgive:
+                        warnings.warn("tied parameter '{0}' tied to unknown parameter '{1}'".format(tpar,ptied),PyemuWarning)
+                    else:
+                        raise Exception("Pst.sanity_check() error: tied parameter '{0}' tied to unknown parameter '{1}'".format(tpar,ptied))
+                elif ptied not in sadj:
+                    if forgive:
+                        warnings.warn("tied parameter '{0}' tied to non-adjustable parameter '{1}'".format(tpar,ptied),PyemuWarning)
+                    else:
+                        raise Exception("Pst.sanity_check() error: tied parameter '{0}' tied to non-adjustable parameter '{1}'".format(tpar,ptied))
+
 
         # print("noptmax: {0}".format(self.control_data.noptmax))
 
@@ -1559,6 +1597,7 @@ class Pst(object):
         self.new_filename = new_filename
         self.rectify_pgroups()
         self.rectify_pi()
+        self._rectify_parchglim()
         self._update_control_section()
         self.sanity_checks()
 
@@ -1749,12 +1788,21 @@ class Pst(object):
                 "Pst.write() error: version must be 1 or 2, not '{0}'".format(version)
             )
 
+    def _rectify_parchglim(self):
+        """private method to just fix the parchglim vs cross zero issue"""
+        par = self.parameter_data
+        need_fixing = par.loc[par.parubnd > 0,:].copy()
+        need_fixing = need_fixing.loc[par.parlbnd <= 0, "parnme"]
+
+        self.parameter_data.loc[need_fixing,"parchglim"] = "relative"
+
     def _write_version1(self, new_filename):
         """private method to write a version 1 pest control file"""
         self.new_filename = new_filename
         self.rectify_pgroups()
         self.rectify_pi()
         self._update_control_section()
+        self._rectify_parchglim()
         self.sanity_checks()
 
         f_out = open(new_filename, "w")
@@ -3659,3 +3707,102 @@ class Pst(object):
                     df.loc[:, uk] = meta_dict.apply(lambda x: x.get(uk, np.NaN))
             except Exception as e:
                 print("error parsing metadata from '{0}', continuing".format(name))
+
+    def rename_parameters(self,name_dict,pst_path="."):
+        """rename parameters in the control and template files
+
+        Args:
+            name_dict (`dict`): mapping of current to new names.
+            pst_path (str): the path to the control file from where python
+                is running.  Default is "." (python is running in the
+                same directory as the control file)
+
+        Note:
+            no attempt is made to maintain the length of the marker strings
+            in the template files, so if your model is sensitive
+            to changes in spacing in the template file(s), this
+            is not a method for you
+
+            This does a lot of string compare, so its gonna be slow as...
+
+         Example::
+
+            pst = pyemu.Pst(os.path.join("template","pest.pst"))
+            name_dict = {"par1":"par1_better_name"}
+            pst.rename_parameters(name_dict,pst_path="template")
+
+
+
+        """
+
+        missing = set(name_dict.keys()) - set(self.par_names)
+        if len(missing) > 0:
+            raise Exception("Pst.rename_parameters(): the following parameters in 'name_dict'"+
+                            " are not in the control file:\n{0}".format(",".join(missing)))
+
+        par = self.parameter_data
+        par.loc[:,"parnme"] = par.parnme.apply(lambda x: name_dict.get(x,x))
+        par.index = par.parnme.values
+
+        for idx,eq in zip(self.prior_information.index,self.prior_information.equation):
+            for old,new in name_dict.items():
+                eq = eq.replace(old,new)
+            self.prior_information.loc[idx,"equation"] = eq
+
+
+        for tpl_file in self.model_input_data.pest_file:
+            sys_tpl_file = os.path.join(pst_path,tpl_file.replace("/",os.path.sep).replace("\\",os.path.sep))
+            if not os.path.exists(sys_tpl_file):
+                warnings.warn("template file '{0}' not found, continuing...",PyemuWarning)
+                continue
+            lines = open(sys_tpl_file,'r').readlines()
+            with open(sys_tpl_file,'w') as f:
+                for line in lines:
+                    for old,new in name_dict.items():
+                        if old in line:
+                            line = line.replace(old,new)
+                    f.write(line)
+
+    def rename_observations(self, name_dict, pst_path="."):
+        """rename observations in the control and instruction files
+
+        Args:
+            name_dict (`dict`): mapping of current to new names.
+            pst_path (str): the path to the control file from where python
+                is running.  Default is "." (python is running in the
+                same directory as the control file)
+
+        Note:
+            This does a lot of string compare, so its gonna be slow as...
+
+         Example::
+
+            pst = pyemu.Pst(os.path.join("template","pest.pst"))
+            name_dict = {"obs1":"obs1_better_name"}
+            pst.rename_observations(name_dict,pst_path="template")
+
+
+
+        """
+
+        missing = set(name_dict.keys()) - set(self.obs_names)
+        if len(missing) > 0:
+            raise Exception("Pst.rename_observations(): the following observations in 'name_dict'" +
+                            " are not in the control file:\n{0}".format(",".join(missing)))
+
+        obs = self.observation_data
+        obs.loc[:, "obsnme"] = obs.obsnme.apply(lambda x: name_dict.get(x, x))
+        obs.index = obs.obsnme.values
+
+        for ins_file in self.model_output_data.pest_file:
+            sys_ins_file = os.path.join(pst_path, ins_file.replace("/", os.path.sep).replace("\\", os.path.sep))
+            if not os.path.exists(sys_ins_file):
+                warnings.warn("instruction file '{0}' not found, continuing...", PyemuWarning)
+                continue
+            lines = open(sys_ins_file, 'r').readlines()
+            with open(sys_ins_file, 'w') as f:
+                for line in lines:
+                    for old, new in name_dict.items():
+                        if old in line:
+                            line = line.replace(old, new)
+                    f.write(line)

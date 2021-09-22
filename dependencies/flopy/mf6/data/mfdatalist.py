@@ -1,4 +1,3 @@
-from collections import OrderedDict
 import math
 import sys
 import os
@@ -311,10 +310,7 @@ class MFList(mfdata.MFMultiDimVar, DataListInterface):
                     self._simulation_data.verbosity_level.value
                     >= VerbosityLevel.verbose.value
                 ):
-                    print(
-                        "Storing {} internally.."
-                        ".".format(self.structure.name)
-                    )
+                    print(f"Storing {self.structure.name} internally...")
                 internal_data = {
                     "data": data,
                 }
@@ -684,7 +680,7 @@ class MFList(mfdata.MFMultiDimVar, DataListInterface):
                 type_,
                 value_,
                 traceback_,
-                "search_term={}\ncol={}".format(search_term, col),
+                f"search_term={search_term}\ncol={col}",
                 self._simulation_data.debug,
                 ex,
             )
@@ -750,7 +746,7 @@ class MFList(mfdata.MFMultiDimVar, DataListInterface):
                 ext_string = self._get_external_formatting_string(
                     0, ext_file_action
                 )
-                file_entry.append("{}{}{}".format(indent, indent, ext_string))
+                file_entry.append(f"{indent}{indent}{ext_string}")
                 # write file
 
             except Exception as ex:
@@ -801,6 +797,8 @@ class MFList(mfdata.MFMultiDimVar, DataListInterface):
             self._crnt_line_num = 1
             for mflist_line in range(0, data_lines):
                 text_line = []
+
+                # data
                 index = 0
                 self._get_file_entry_record(
                     data_complete,
@@ -812,16 +810,14 @@ class MFList(mfdata.MFMultiDimVar, DataListInterface):
                     indent,
                 )
 
-                # include comments
+                # comments
                 if (
-                    mflist_line in storage.comments
-                    and storage.comments[mflist_line].text
+                    mflist_line + 1 in storage.comments
+                    and storage.comments[mflist_line + 1].text
                 ):
-                    text_line.append(storage.comments[mflist_line].text)
+                    text_line.append(storage.comments[mflist_line + 1].text)
 
-                file_entry.append(
-                    "{}{}\n".format(indent, indent.join(text_line))
-                )
+                file_entry.append(f"{indent}{indent.join(text_line)}\n")
                 self._crnt_line_num += 1
 
         # unfreeze model grid
@@ -848,9 +844,7 @@ class MFList(mfdata.MFMultiDimVar, DataListInterface):
                 const_str = self._get_constant_formatting_string(
                     storage.get_const_val(0), 0, data_type, ""
                 )
-                text_line.append(
-                    "{}{}{}".format(indent, indent, const_str.upper())
-                )
+                text_line.append(f"{indent}{indent}{const_str.upper()}")
             except Exception as ex:
                 type_, value_, traceback_ = sys.exc_info()
                 raise MFDataException(
@@ -900,7 +894,7 @@ class MFList(mfdata.MFMultiDimVar, DataListInterface):
                             self.structure.get_model(),
                             self.structure.get_package(),
                             self._path,
-                            "processing auxiliary " "variables",
+                            "processing auxiliary variables",
                             self.structure.name,
                             inspect.stack()[0][3],
                             type_,
@@ -1008,7 +1002,7 @@ class MFList(mfdata.MFMultiDimVar, DataListInterface):
                             type_,
                             value_,
                             traceback_,
-                            "Verify that your data is the " "correct shape",
+                            "Verify that your data is the correct shape",
                             self._simulation_data.debug,
                             ex,
                         )
@@ -1033,7 +1027,7 @@ class MFList(mfdata.MFMultiDimVar, DataListInterface):
                                 data_key = data_val.lower()
                                 if data_key not in data_item.keystring_dict:
                                     keystr_struct = data_item.keystring_dict[
-                                        "{}record".format(data_key)
+                                        f"{data_key}record"
                                     ]
                                 else:
                                     keystr_struct = data_item.keystring_dict[
@@ -1165,7 +1159,7 @@ class MFList(mfdata.MFMultiDimVar, DataListInterface):
                                         self.structure.get_model(),
                                         self.structure.get_package(),
                                         self._path,
-                                        "converting data " "to a string",
+                                        "converting data to a string",
                                         self.structure.name,
                                         inspect.stack()[0][3],
                                         type_,
@@ -1280,7 +1274,7 @@ class MFList(mfdata.MFMultiDimVar, DataListInterface):
         filename_base=None,
         file_extension=None,
         mflay=None,
-        **kwargs
+        **kwargs,
     ):
         """
         Plot boundary condition (MfList) data
@@ -1350,7 +1344,7 @@ class MFList(mfdata.MFMultiDimVar, DataListInterface):
             filename_base=None,
             file_extension=None,
             mflay=None,
-            **kwargs
+            **kwargs,
         )
 
 
@@ -1574,9 +1568,9 @@ class MFTransientList(MFList, mfdata.MFTransient, DataListInterface):
             ):
                 fname, ext = os.path.splitext(external_file_path)
                 if datautil.DatumUtil.is_int(sp):
-                    full_name = "{}_{}{}".format(fname, sp + 1, ext)
+                    full_name = f"{fname}_{sp + 1}{ext}"
                 else:
-                    full_name = "{}_{}{}".format(fname, sp, ext)
+                    full_name = f"{fname}_{sp}{ext}"
 
                 super().store_as_external_file(
                     full_name,
@@ -1671,7 +1665,7 @@ class MFTransientList(MFList, mfdata.MFTransient, DataListInterface):
             Automatically correct data.
         """
         self._cache_model_grid = True
-        if isinstance(data, dict) or isinstance(data, OrderedDict):
+        if isinstance(data, dict):
             if "filename" not in data:
                 # each item in the dictionary is a list for one stress period
                 # the dictionary key is the stress period the list is for
@@ -1685,7 +1679,10 @@ class MFTransientList(MFList, mfdata.MFTransient, DataListInterface):
                         self.empty_keys[key] = True
                     else:
                         self.empty_keys[key] = False
-                        if "check" in list_item:
+                        if (
+                            isinstance(list_item, dict)
+                            and "check" in list_item
+                        ):
                             check = list_item["check"]
                         else:
                             check = True
@@ -1815,7 +1812,7 @@ class MFTransientList(MFList, mfdata.MFTransient, DataListInterface):
         super().update_record(record, key_index)
 
     def _new_storage(self, stress_period=0):
-        return OrderedDict()
+        return {}
 
     def _get_storage_obj(self):
         if (
@@ -1833,7 +1830,7 @@ class MFTransientList(MFList, mfdata.MFTransient, DataListInterface):
         filename_base=None,
         file_extension=None,
         mflay=None,
-        **kwargs
+        **kwargs,
     ):
         """
         Plot stress period boundary condition (MfList) data for a specified
@@ -1911,7 +1908,7 @@ class MFTransientList(MFList, mfdata.MFTransient, DataListInterface):
             filename_base=filename_base,
             file_extension=file_extension,
             mflay=mflay,
-            **kwargs
+            **kwargs,
         )
         return axes
 
