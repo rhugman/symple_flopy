@@ -1556,6 +1556,16 @@ class PstFromFlopyModel(object):
         kl_num_eig=100,
         kl_geostruct=None,
     ):
+        dep_warn = (
+            "\n`PstFromFlopyModel()` method is getting old and may not"
+            "be kept in sync with changes to Flopy and MODFLOW.\n"
+            "Perhaps consider looking at `pyemu.utils.PstFrom()`,"
+            "which is (aiming to be) much more general,"
+            "forward model independent, and generally kicks ass.\n"
+            "Checkout: https://www.sciencedirect.com/science/article/abs/pii/S1364815221000657?via%3Dihub\n"
+            "and https://github.com/pypest/pyemu_pestpp_workflow for more info."
+        )
+        warnings.warn(dep_warn, DeprecationWarning)
 
         self.logger = pyemu.logger.Logger("PstFromFlopyModel.log")
         self.log = self.logger.log
@@ -1777,7 +1787,7 @@ class PstFromFlopyModel(object):
                 )
             )
         self.log("saving intermediate _setup_<> dfs into {0}".format(self.m.model_ws))
-
+        warnings.warn(dep_warn, DeprecationWarning)
         self.logger.statement("all done")
 
     def _setup_sfr_obs(self):
@@ -1935,7 +1945,15 @@ class PstFromFlopyModel(object):
             self.m = model
             self.org_model_ws = str(self.m.model_ws)
             self.new_model_ws = new_model_ws
-
+        try:
+            self.sr = self.m.sr
+        except AttributeError:  # if sr doesnt exist anymore!
+            # assume that we have switched to model grid
+            self.sr = SpatialReference.from_namfile(
+                os.path.join(self.org_model_ws, self.m.namefile),
+                delr=self.m.modelgrid.delr,
+                delc=self.m.modelgrid.delc
+            )
         self.log("updating model attributes")
         self.m.array_free_format = True
         self.m.free_format_input = True
@@ -2107,8 +2125,8 @@ class PstFromFlopyModel(object):
                             )
                         parnme.append(pname)
                         pname = " ~     {0}   ~ ".format(pname)
-                        x.append(self.m.sr.xcentergrid[i, j])
-                        y.append(self.m.sr.ycentergrid[i, j])
+                        x.append(self.sr.xcentergrid[i, j])
+                        y.append(self.sr.ycentergrid[i, j])
                     f.write(pname)
                 f.write("\n")
         df = pd.DataFrame({"parnme": parnme, "x": x, "y": y}, index=parnme)
@@ -2298,7 +2316,7 @@ class PstFromFlopyModel(object):
                     )
                     ok_pp = pyemu.geostats.OrdinaryKrige(self.pp_geostruct, pp_df_k)
                     ok_pp.calc_factors_grid(
-                        self.m.sr,
+                        self.sr,
                         var_filename=var_file,
                         zone_array=ib_k,
                         num_threads=10,
@@ -2413,7 +2431,7 @@ class PstFromFlopyModel(object):
 
         kl_df = kl_setup(
             self.kl_num_eig,
-            self.m.sr,
+            self.sr,
             self.kl_geostruct,
             kl_prefix,
             factors_file=fac_file,
@@ -2496,7 +2514,7 @@ class PstFromFlopyModel(object):
                         self.cn_suffix,
                         self.m.bas6.ibound[layer].array,
                         (self.m.nrow, self.m.ncol),
-                        self.m.sr,
+                        self.sr,
                     )
                 except Exception as e:
                     self.logger.lraise(
@@ -2514,7 +2532,7 @@ class PstFromFlopyModel(object):
                         self.gr_suffix,
                         self.m.bas6.ibound[layer].array,
                         (self.m.nrow, self.m.ncol),
-                        self.m.sr,
+                        self.sr,
                     )
                 except Exception as e:
                     self.logger.lraise(
@@ -2550,7 +2568,7 @@ class PstFromFlopyModel(object):
                         self.zn_suffix,
                         k_zone_dict[layer],
                         (self.m.nrow, self.m.ncol),
-                        self.m.sr,
+                        self.sr,
                     )
                 except Exception as e:
                     self.logger.lraise(
@@ -3355,10 +3373,10 @@ class PstFromFlopyModel(object):
             parnme, pargp = [], []
             # if pak != 'hfb6':
             x = df.apply(
-                lambda x: self.m.sr.xcentergrid[int(x.i), int(x.j)], axis=1
+                lambda x: self.sr.xcentergrid[int(x.i), int(x.j)], axis=1
             ).values
             y = df.apply(
-                lambda x: self.m.sr.ycentergrid[int(x.i), int(x.j)], axis=1
+                lambda x: self.sr.ycentergrid[int(x.i), int(x.j)], axis=1
             ).values
             # else:
             #     # note -- for HFB6, only row and col for node 1
@@ -3611,6 +3629,9 @@ def apply_list_and_array_pars(arr_par_file="mult2model_info.csv", chunk_len=50):
         by `PstFrom.build_pst()`
     """
     df = pd.read_csv(arr_par_file, index_col=0)
+    if "operator" not in df.columns:
+        df.loc[:,"operator"] = "m"
+    df.loc[pd.isna(df.operator),"operator"] = "m"
     arr_pars = df.loc[df.index_cols.isna()].copy()
     list_pars = df.loc[df.index_cols.notna()].copy()
     # extract lists from string in input df
@@ -3636,6 +3657,8 @@ def _process_chunk_array_files(chunk, i, df):
 
 
 def _process_array_file(model_file, df):
+    if "operator" not in df.columns:
+        df.loc[:,"operator"] = "m"
     # find all mults that need to be applied to this array
     df_mf = df.loc[df.model_file == model_file, :]
     results = []
@@ -3645,7 +3668,7 @@ def _process_array_file(model_file, df):
     org_arr = np.loadtxt(org_file[0])
 
     if "mlt_file" in df_mf.columns:
-        for mlt in df_mf.mlt_file:
+        for mlt,operator in zip(df_mf.mlt_file,df_mf.operator):
             if pd.isna(mlt):
                 continue
             mlt_data = np.loadtxt(mlt)
@@ -3655,7 +3678,12 @@ def _process_array_file(model_file, df):
                         org_file, org_arr.shape, mlt, mlt_data.shape
                     )
                 )
-            org_arr *= np.loadtxt(mlt)
+            if operator == "*" or operator.lower()[0] == "m":
+                org_arr *= mlt_data
+            elif operator == "+" or operator.lower()[0] == "a":
+                org_arr += mlt_data
+            else:
+                raise Exception("unrecognized operator '{0}' for mlt file '{1}'".format(operator,mlt))
         if "upper_bound" in df.columns:
             ub_vals = df_mf.upper_bound.value_counts().dropna().to_dict()
             if len(ub_vals) == 0:
@@ -4250,9 +4278,17 @@ def _process_list_file(model_file, df):
                 new_df.index.intersection(mlts.index).sort_values().drop_duplicates()
             )
             mlt_cols = [str(col) for col in mlt.use_cols]
-            new_df.loc[common_idx, mlt_cols] = (
-                new_df.loc[common_idx, mlt_cols] * mlts.loc[common_idx, mlt_cols]
-            ).values
+            operator = mlt.operator
+            if operator == "*" or operator.lower()[0] == "m":
+                new_df.loc[common_idx, mlt_cols] = (
+                    new_df.loc[common_idx, mlt_cols] * mlts.loc[common_idx, mlt_cols]
+                ).values
+            elif operator == "+" or operator.lower()[0] == "a":
+                new_df.loc[common_idx, mlt_cols] = (
+                        new_df.loc[common_idx, mlt_cols] + mlts.loc[common_idx, mlt_cols]
+                ).values
+            else:
+                raise Exception("unsupported operator '{0}' for mlt file '{1}'".format(operator,mlt.mlt_file))
         # bring mult index back to columns AND re-order
         new_df = new_df.reset_index().set_index("oidx")[org_data.columns].sort_index()
     if "upper_bound" in df.columns:

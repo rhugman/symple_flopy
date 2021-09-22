@@ -34,6 +34,7 @@ def setup_pilotpoints_grid(
     tpl_dir=".",
     shapename="pp.shp",
     longnames=False,
+    pp_filename_dict = {}
 ):
     """setup a regularly-spaced (gridded) pilot point parameterization
 
@@ -58,6 +59,10 @@ def setup_pilotpoints_grid(
         tpl_dir (`str`, optional): directory to write pilot point template file to.  Default is '.'
         shapename (`str`, optional): name of shapefile to write that contains pilot
             point information. Default is "pp.shp"
+        longnames (`bool`): flag to use parameter names longer than 12 chars.  Default is False
+        pp_filename_dict (`dict`): optional dict of prefix-pp filename pairs.  prefix values must
+            match the values in `prefix_dict`.  If None, then pp filenames are based on the
+            key values in `prefix_dict`.  Default is None
 
     Returns:
         `pandas.DataFrame`: a dataframe summarizing pilot point information (same information
@@ -76,7 +81,15 @@ def setup_pilotpoints_grid(
         except Exception as e:
             raise ImportError("error importing flopy: {0}".format(str(e)))
         assert isinstance(ml, flopy.modflow.Modflow)
-        sr = ml.sr
+        try:
+            sr = ml.sr
+        except AttributeError:
+            from pyemu.utils.helpers import SpatialReference
+            sr = SpatialReference.from_namfile(
+                os.path.join(ml.model_ws, ml.namefile),
+                delr=ml.modelgrid.delr,
+                delc=ml.modelgrid.delc
+            )
         if ibound is None:
             ibound = ml.bas6.ibound.array
             # build a generic prefix_dict
@@ -115,6 +128,17 @@ def setup_pilotpoints_grid(
                 "from 'sr':{0}:{1}".format(str(e0), str(e1))
             )
     start = int(float(every_n_cell) / 2.0)
+    
+    # fix for x-section models
+    if xcentergrid.shape[0]==1 :
+        start_row = 0
+    else : 
+        start_row = start
+
+    if xcentergrid.shape[1]==1 :
+        start_col = 0
+    else : 
+        start_col = start
 
     # check prefix_dict
     keys = list(prefix_dict.keys())
@@ -162,8 +186,8 @@ def setup_pilotpoints_grid(
             if k not in prefix_dict.keys():
                 continue
             # cycle through rows and cols
-            for i in range(start, ib.shape[0] - start, every_n_cell):
-                for j in range(start, ib.shape[1] - start, every_n_cell):
+            for i in range(start_row, ib.shape[0] - start_row, every_n_cell):
+                for j in range(start_col, ib.shape[1] - start_col, every_n_cell):
                     # skip if this is an inactive cell
                     if ib[i, j] <= 0:  # this will account for MF6 style ibound as well
                         continue
@@ -204,7 +228,10 @@ def setup_pilotpoints_grid(
                         ~np.any([prefix.startswith(p) for p in ibound.keys()])
                         and par == "general_zn"
                     ):
-                        base_filename = "{0}pp.dat".format(prefix.replace(":", ""))
+                        if prefix in pp_filename_dict.keys():
+                            base_filename = pp_filename_dict[prefix].replace(":", "")
+                        else:
+                            base_filename = "{0}pp.dat".format(prefix.replace(":", ""))
                         pp_filename = os.path.join(pp_dir, base_filename)
                         # write the base pilot point file
                         write_pp_file(pp_filename, pp_df)
@@ -212,8 +239,7 @@ def setup_pilotpoints_grid(
                         tpl_filename = os.path.join(tpl_dir, base_filename + ".tpl")
                         # write the tpl file
                         pilot_points_to_tpl(
-                            pp_df, tpl_filename, name_prefix=prefix, longnames=longnames
-                        )
+                            pp_df, tpl_filename, name_prefix=prefix, longnames=longnames)
                         pp_df.loc[:, "tpl_filename"] = tpl_filename
                         pp_df.loc[:, "pp_filename"] = pp_filename
                         pp_df.loc[:, "pargp"] = prefix
@@ -474,6 +500,8 @@ def pilot_points_to_tpl(pp_file, tpl_file=None, name_prefix=None, longnames=Fals
             pilot point parameters will be named "hk_0001","hk_0002", etc.
             If None, parameter names from `pp_df.name` are used.
             Default is None.
+        longnames (`bool`): flag to use parameter names longer than 12 chars.
+            Default is False
 
     Returns:
         `pandas.DataFrame`: a dataframe with pilot point information
@@ -506,7 +534,7 @@ def pilot_points_to_tpl(pp_file, tpl_file=None, name_prefix=None, longnames=Fals
                 )
             elif "x" in pp_df.columns and "y" in pp_df.columns:
                 pp_df.loc[:, "parnme"] = pp_df.apply(
-                    lambda x: "{0}_x:{1}_y:{2}".format(name_prefix, x.x, x.y),
+                    lambda x: "{0}_x:{1:0.2f}_y:{2:0.2f}".format(name_prefix, x.x, x.y),
                     axis=1,
                 )
             else:

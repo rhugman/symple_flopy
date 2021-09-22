@@ -1,4 +1,3 @@
-from __future__ import print_function, division
 import os
 import numpy as np
 from ..discretization import StructuredGrid
@@ -84,7 +83,7 @@ class XmlWriterInterface:
             self.write_string(">")
         indent = self.indent_level * self.indent_char
         self.indent_level += 1
-        tag_string = "\n" + indent + "<%s" % tag
+        tag_string = f"\n{indent}<{tag}"
         self.write_string(tag_string)
         self.open_tag = True
         self.current.append(tag)
@@ -98,7 +97,7 @@ class XmlWriterInterface:
                 self.write_string(">")
                 self.open_tag = False
             indent = self.indent_level * self.indent_char
-            tag_string = "\n" + indent + "</%s>" % tag
+            tag_string = f"\n{indent}</{tag}>"
             self.write_string(tag_string)
         else:
             self.write_string("/>")
@@ -109,7 +108,7 @@ class XmlWriterInterface:
     def add_attributes(self, **kwargs):
         assert self.open_tag
         for key in kwargs:
-            st = ' %s="%s"' % (key, kwargs[key])
+            st = f' {key}="{kwargs[key]}"'
             self.write_string(st)
         return self
 
@@ -210,8 +209,7 @@ class XmlWriterAscii(XmlWriterInterface):
             # https://gitlab.kitware.com/paraview/paraview/issues/19042
             # this may be removed in the future if they fix the bug
             array_lay_flat[np.isnan(array_lay_flat)] = -1e9
-            s = " ".join(["{}".format(val) for val in array_lay_flat])
-            self.write_line(s)
+            self.write_line(" ".join(str(val) for val in array_lay_flat))
 
         # close DataArray element
         self.close_element("DataArray")
@@ -299,7 +297,7 @@ class XmlWriterBinary(XmlWriterInterface):
 
     def _write_size(self, block_size):
         # size is a 64 bit unsigned integer
-        byte_order = self.byte_order + "Q"
+        byte_order = f"{self.byte_order}Q"
         block_size = struct.pack(byte_order, block_size)
         self.f.write(block_size)
 
@@ -472,7 +470,7 @@ class Vtk:
                 self.nx = 0
             else:
                 raise ValueError(
-                    "The option true2d was used but the model is " "not 2d."
+                    "The option true2d was used but the model is not 2d."
                 )
             self.cell_type = 8
         else:
@@ -531,8 +529,7 @@ class Vtk:
             ]
             if not any(vtk_grid_type in s for s in allowable_types):
                 raise ValueError(
-                    '"' + vtk_grid_type + '" is not a correct '
-                    "vtk_grid_type."
+                    f'"{vtk_grid_type}" is not a correct vtk_grid_type.'
                 )
             if (
                 vtk_grid_type == "ImageData"
@@ -733,7 +730,7 @@ class Vtk:
         # output file
         output_file = output_file + self.file_extension
         if self.verbose:
-            print("Writing vtk file: " + output_file)
+            print(f"Writing vtk file: {output_file}")
 
         # initialize xml file
         if self.binary:
@@ -779,9 +776,7 @@ class Vtk:
                 npoints = ncells * 8
             if self.verbose:
                 print(
-                    "Number of point is {}, Number of cells is {}\n".format(
-                        npoints, ncells
-                    )
+                    f"Number of point is {npoints}, Number of cells is {ncells}\n"
                 )
 
             # piece
@@ -821,35 +816,17 @@ class Vtk:
 
         elif self.vtk_grid_type == "ImageData":
             # note: in vtk, "extent" actually means indices of grid lines
-            vtk_extent_str = (
-                "0"
-                + " "
-                + str(self.nx)
-                + " "
-                + "0"
-                + " "
-                + str(self.ny)
-                + " "
-                + "0"
-                + " "
-                + str(self.nz)
-            )
+            vtk_extent_str = f"0 {self.nx} 0 {self.ny} 0 {self.nz}"
             xml.add_attributes(WholeExtent=vtk_extent_str)
             grid_extent = self.modelgrid.xyzextent
             vtk_origin_str = (
-                str(grid_extent[0])
-                + " "
-                + str(grid_extent[2])
-                + " "
-                + str(grid_extent[4])
+                f"{grid_extent[0]} {grid_extent[2]} {grid_extent[4]}"
             )
             xml.add_attributes(Origin=vtk_origin_str)
-            vtk_spacing_str = (
-                str(self.modelgrid.delr[0])
-                + " "
-                + str(self.modelgrid.delc[0])
-                + " "
-                + str(self.modelgrid.top[0, 0] - self.modelgrid.botm[0, 0, 0])
+            vtk_spacing_str = "{} {} {}".format(
+                self.modelgrid.delr[0],
+                self.modelgrid.delc[0],
+                self.modelgrid.top[0, 0] - self.modelgrid.botm[0, 0, 0],
             )
             xml.add_attributes(Spacing=vtk_spacing_str)
 
@@ -858,19 +835,7 @@ class Vtk:
 
         elif self.vtk_grid_type == "RectilinearGrid":
             # note: in vtk, "extent" actually means indices of grid lines
-            vtk_extent_str = (
-                "0"
-                + " "
-                + str(self.nx)
-                + " "
-                + "0"
-                + " "
-                + str(self.ny)
-                + " "
-                + "0"
-                + " "
-                + str(self.nz)
-            )
+            vtk_extent_str = f"0 {self.nx} 0 {self.ny} 0 {self.nz}"
             xml.add_attributes(WholeExtent=vtk_extent_str)
 
             # piece
@@ -1360,7 +1325,7 @@ def export_cbc(
         os.mkdir(otfolder)
 
     # set up the pvd file to make the output files time enabled
-    pvdfilename = model.name + "_CBC.pvd"
+    pvdfilename = f"{model.name}_CBC.pvd"
     pvdfile = open(os.path.join(otfolder, pvdfilename), "w")
 
     pvdfile.write(
@@ -1403,7 +1368,7 @@ def export_cbc(
             kstpkper[0], tuple
         ):
             raise Exception(
-                "kstpkper must be a tuple (kstp, kper) or a list " "of tuples"
+                "kstpkper must be a tuple (kstp, kper) or a list of tuples"
             )
     else:
         kstpkper = cbb.get_kstpkper()
@@ -1425,15 +1390,14 @@ def export_cbc(
     addarray = False
     count = 1
     for kstpkper_i in kstpkper:
-        ot_base = "{}_CBC_KPER{}_KSTP{}".format(
-            model_name, kstpkper_i[1] + 1, kstpkper_i[0] + 1
+        ot_base = (
+            f"{model_name}_CBC_KPER{kstpkper_i[1] + 1}_KSTP{kstpkper_i[0] + 1}"
         )
         otfile = os.path.join(otfolder, ot_base)
         pvdfile.write(
-            """<DataSet timestep="{}" group="" part="0"
-                     file="{}"/>\n""".format(
-                count, ot_base
-            )
+            f"""<DataSet timestep="{count}" group="" part="0"
+                     file="{ot_base}"/>
+"""
         )
         for name in keylist:
 
@@ -1459,7 +1423,7 @@ def export_cbc(
                     addarray = True
                 else:
                     raise Exception(
-                        "Data type not currently supported " "for cbc output"
+                        "Data type not currently supported for cbc output"
                     )
                     # print('Data type not currently supported '
                     #       'for cbc output')
@@ -1551,7 +1515,7 @@ def export_heads(
         os.mkdir(otfolder)
 
     # start writing the pvd file to make the data time aware
-    pvdfilename = model.name + "_" + text + ".pvd"
+    pvdfilename = f"{model.name}_{text}.pvd"
     pvdfile = open(os.path.join(otfolder, pvdfilename), "w")
 
     pvdfile.write(
@@ -1573,7 +1537,7 @@ def export_heads(
             kstpkper[0], tuple
         ):
             raise Exception(
-                "kstpkper must be a tuple (kstp, kper) or a list " "of tuples"
+                "kstpkper must be a tuple (kstp, kper) or a list of tuples"
             )
     else:
         kstpkper = hds.get_kstpkper()
@@ -1594,17 +1558,17 @@ def export_heads(
     for kstpkper_i in kstpkper:
         hdarr = hds.get_data(kstpkper_i)
         vtk.add_array(text, hdarr)
-        ot_base = ("{}_" + text + "_KPER{}_KSTP{}").format(
-            model.name, kstpkper_i[1] + 1, kstpkper_i[0] + 1
+        ot_base = (
+            f"{model.name}_{text}_"
+            f"KPER{kstpkper_i[1] + 1}_KSTP{kstpkper_i[0] + 1}"
         )
         otfile = os.path.join(otfolder, ot_base)
         # vtk.write(otfile, timeval=totim_dict[(kstp, kper)])
         vtk.write(otfile)
         pvdfile.write(
-            """<DataSet timestep="{}" group="" part="0"
-         file="{}"/>\n""".format(
-                count, ot_base
-            )
+            f"""<DataSet timestep="{count}" group="" part="0"
+         file="{ot_base}"/>
+"""
         )
         count += 1
 
@@ -1682,7 +1646,7 @@ def export_array(
         binary=binary,
     )
     vtk.add_array(name, array, array2d=array2d)
-    otfile = os.path.join(output_folder, "{}".format(name))
+    otfile = os.path.join(output_folder, name)
     vtk.write(otfile)
 
     return
@@ -1756,7 +1720,7 @@ def export_vector(
         binary=binary,
     )
     vtk.add_vector(name, vector, array2d=array2d)
-    otfile = os.path.join(output_folder, "{}".format(name))
+    otfile = os.path.join(output_folder, name)
     vtk.write(otfile)
 
     return
@@ -1854,16 +1818,16 @@ def export_transient(
 
             vtk.add_array(name, t2d_array_input, array2d=True)
 
-            otname = "{}".format(name) + separator + "0{}".format(kper + 1)
-            otfile = os.path.join(output_folder, "{}".format(otname))
+            otname = f"{name}{separator}0{kper + 1}"
+            otfile = os.path.join(output_folder, otname)
             vtk.write(otfile, timeval=to_tim[kper])
 
     else:
         for kper in kpers:
             vtk.add_array(name, array[kper])
 
-            otname = "{}".format(name) + separator + "0{}".format(kper + 1)
-            otfile = os.path.join(output_folder, "{}".format(otname))
+            otname = f"{name}{separator}0{kper + 1}"
+            otfile = os.path.join(output_folder, otname)
             vtk.write(otfile, timeval=to_tim[kper])
     return
 
@@ -2031,7 +1995,7 @@ def export_package(
 
                     else:
                         raise Exception(
-                            "Data type not understond in data " "list"
+                            "Data type not understond in data list"
                         )
 
             elif value.data_type == DataType.transient3d:
@@ -2058,7 +2022,7 @@ def export_package(
         # write out data
         # write array data
         if len(vtk.arrays) > 0:
-            otfile = os.path.join(otfolder, "{}".format(pak_name))
+            otfile = os.path.join(otfolder, pak_name)
             vtk.write(otfile)
 
         # write transient data
@@ -2079,9 +2043,7 @@ def export_package(
                 # else:
                 #     time = None
                 # set up output file
-                otfile = os.path.join(
-                    otfolder, "{}_0{}".format(pak_name, kper + 1)
-                )
+                otfile = os.path.join(otfolder, f"{pak_name}_0{kper + 1}")
                 for name, array in sorted(array_dict.items()):
                     if array.array2d:
                         array_shape = array.array.shape
