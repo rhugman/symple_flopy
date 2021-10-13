@@ -13,6 +13,24 @@ def postproc():
 			self.budgetkey = "MASS BUDGET FOR ENTIRE MODEL"
 			return
 
+
+	# scrub the conc obs for missing "e"
+	lines = open("conc_obs.csv",'r').readlines()
+	with open("conc_obs.csv",'w') as f:
+		for line in lines:
+			line = line.lower()
+			raw = line.strip().split(",")
+			for i,r in enumerate(raw):
+				if "-" in r[1:] and "e-" not in r:
+					raw[i] = r[0] + r[1:].replace("-","e-")
+					try:
+						_ = float(raw[i])
+					except:
+						raise Exception("error casting repaired value: "+raw[i])
+			line = ",".join(raw)
+			f.write(line+"\n")
+
+
 	ucn = [f for f in os.listdir(".") if f.lower().endswith(".ucn")][0]
 	ucn = flopy.utils.HeadFile(ucn,precision="double",text="concentration")
 	d = ucn.get_data()
