@@ -9,6 +9,8 @@ import pandas as pd
 from shapely.geometry import MultiLineString
 
 fm = flopy.modflow
+from flopy.discretization import StructuredGrid
+from flopy.mf6.utils.binarygrid_util import MfGrdFile
 from flopy.utils import binaryfile as bf
 from flopy.utils.postprocessing import get_water_table
 from scipy.interpolate import griddata
@@ -20,6 +22,7 @@ from mfsetup.discretization import (
 from mfsetup.fileio import check_source_files
 from mfsetup.grid import get_ij
 from mfsetup.interpolate import (
+    Interpolator,
     get_source_dest_model_xys,
     interp_weights,
     interpolate,
@@ -859,6 +862,222 @@ def distribute_parent_fluxes_to_inset(Q_parent, botm_parent, top_parent,
     return np.array(Q_inset)
 
 
+def get_kij_from_node3d(node3d, nrow, ncol):
+    """For a consecutive cell number in row-major order
+    (row, column, layer), get the zero-based row, column position.
+    """
+    node2d = node3d % (nrow * ncol)
+    k = node3d // (nrow * ncol)
+    i = node2d // ncol
+    j = node2d % ncol
+    return k, i, j
+
+
+def get_intercell_connections(ia, ja, flowja):
+    print('Making DataFrame of intercell connections...')
+    ta = time.time()
+    all_n = []
+    m = []
+    q = []
+    for n in range(len(ia)-1):
+        for ipos in range(ia[n] + 1, ia[n+1]):
+            all_n.append(n)
+            m.append(ja[ipos])  # m is the cell that n connects to
+            q.append(flowja[ipos])  # flow across the connection
+    df = pd.DataFrame({'n': all_n, 'm': m, 'q': q})
+    et = time.time() - ta
+    print("finished in {:.2f}s\n".format(et))
+    return df
+
+
+def get_flowja_face(cell_budget_file, binary_grid_file,
+                    kstpkper=(0, 0),
+                    specific_discharge=False):
+    """Get DataFrame of FLOW-JA-FACE (cell by cell flow connections)
+    from MODFLOW 6 budget output and binary grid file.
+
+    Parameters
+    ----------
+    cell_budget_file : str, pathlike, or instance of flopy.utils.binaryfile.CellBudgetFile
+        File path or pointer to MODFLOW 6 cell budget file.
+    binary_grid_file : str or pathlike
+        File path to MODFLOW 6 binary grid (``*.dis.grb``) file
+    kstpkper : tuple
+        zero-based (time step, stress period)
+    specific_discharge : bool
+        Option to return arrays of specific discharge (1D vector components)
+        instead of volumetric fluxes.
+        By default, False
+
+    Returns
+    -------
+    df : DataFrame
+        DataFrame with one connection per row, with the following columns
+
+        =================== ===================================================================
+        n                   zero-based from: cell number
+        m                   zero-based to: cell number
+        q                   volumetric flux or specific discharge
+        kn, in, jn          zero-based layer, row, column location of n cell (structured grids)
+        km, im, jm          zero-based layer, row, column location of m cell (structured grids)
+        =================== ===================================================================
+    """
+    if isinstance(cell_budget_file, str) or isinstance(cell_budget_file, Path):
+        cbb = bf.CellBudgetFile(cell_budget_file)
+    else:
+        cbb = cell_budget_file
+    if binary_grid_file is None:
+        print("Couldn't get FLOW-JA-FACE, need binary grid file for connection information.")
+        return
+    bgf = MfGrdFile(binary_grid_file)
+    # IA array maps cell number to connection number
+    # (one-based index number of first connection at each cell)?
+    # taking the forward difference then yields nconnections per cell
+    ia = bgf._datadict['IA'] - 1
+    # Connections in the JA array correspond directly with the
+    # FLOW-JA-FACE record that is written to the budget file.
+    ja = bgf._datadict['JA'] - 1  # cell connections
+    flowja = cbb.get_data(text='FLOW-JA-FACE', kstpkper=kstpkper)[0][0, 0, :]
+    df = get_intercell_connections(ia, ja, flowja)
+    cols = ['n', 'm', 'q']
+
+    # get the k, i, j locations for plotting the connections
+    if isinstance(bgf.modelgrid, StructuredGrid):
+        nlay, nrow, ncol = bgf.modelgrid.nlay, bgf.modelgrid.nrow, bgf.modelgrid.ncol
+        k, i, j = get_kij_from_node3d(df['n'].values, nrow, ncol)
+        df['kn'], df['in'], df['jn'] = k, i, j
+        k, i, j = get_kij_from_node3d(df['m'].values, nrow, ncol)
+        df['km'], df['im'], df['jm'] = k, i, j
+        df.reset_index()
+        cols += ['kn', 'in', 'jn', 'km', 'im', 'jm']
+    return df[cols].copy()
+
+
+def get_qx_qy_qz(cell_budget_file, binary_grid_file=None,
+                 version='mf6',
+                 model_top=None, model_bottom_array=None,
+                 kstpkper=(0, 0),
+                 specific_discharge=False, 
+                 headfile=None, 
+                 modelgrid=None):
+    """Get 2 or 3D arrays of cell by cell flows across the cell faces
+    (for structured grid models).
+
+    Parameters
+    ----------
+    cell_budget_file : str, pathlike, or instance of flopy.utils.binaryfile.CellBudgetFile
+        File path or pointer to MODFLOW cell budget file.
+    binary_grid_file : str or pathlike
+        File path to MODFLOW 6 binary grid (``*.dis.grb``) file. Not needed for MFNWT
+    version : str
+        MODFLOW version- 'mf6' or other. If not 'mf6', the cell budget output 
+        is assumed to be formatted similar to a MODFLOW 2005 style model.
+    model_top : 2D numpy array of shape (nrow, ncol)
+        Model top elevations (only needed for modflow 2005 style models without 
+        a binary grid file)
+    model_bottom_array : 3D numpy array of shape (nlay, nrow, ncol)
+        Model bottom elevations (only needed for modflow 2005 style models 
+        without a binary grid file)
+    kstpkper : tuple
+        zero-based (time step, stress period)
+    specific_discharge : bool
+        Option to return arrays of specific discharge (1D vector components)
+        instead of volumetric fluxes.
+        By default, False
+    headfile : str, pathlike, or instance of flopy.utils.binaryfile.HeadFile
+        File path or pointer to MODFLOW head file. Only required if 
+        specific_discharge=True
+    modelgrid : instance of MFsetupGrid object
+        Defaults to None, only required if specific_discharge=True
+
+
+    Returns
+    -------
+    Qx, Qy, Qz : tuple of 2 or 3D numpy arrays
+        Volumetric or specific discharge fluxes across cell faces.
+    """
+
+    if version == 'mf6':
+        assert binary_grid_file is not None, 'Must specify mf6 binary grid file'
+        # get dataframe of flow at each n to m cell connection
+        df = get_flowja_face(cell_budget_file, binary_grid_file=binary_grid_file,
+                            kstpkper=kstpkper, specific_discharge=specific_discharge)
+
+        # get grid info
+        bgf = MfGrdFile(binary_grid_file)
+        nlay, nrow, ncol = bgf.modelgrid.nlay, bgf.modelgrid.nrow, bgf.modelgrid.ncol
+
+        # get arrays of flow through cell faces
+        # Qx (right face; TODO: confirm direction)
+        rfdf = df.loc[(df['jn'] < df['jm'])]
+        nlay = rfdf['km'].max() + 1
+        qx = np.zeros((nlay, nrow, ncol))
+        qx[rfdf['kn'].values, rfdf['in'].values, rfdf['jn'].values] = -rfdf.q.values
+
+        # Qy (front face; TODO: confirm direction)
+        ffdf = df.loc[(df['in'] < df['im'])]
+        qy = np.zeros((nlay, nrow, ncol))
+        qy[ffdf['kn'].values, ffdf['in'].values, ffdf['jn'].values] = -ffdf.q.values
+
+        # Qz (bottom face; TODO: confirm that this is downward positive)
+        bfdf = df.loc[(df['kn'] < df['km'])]
+        qz = np.zeros((nlay, nrow, ncol))
+        qz[bfdf['kn'].values, bfdf['in'].values, bfdf['jn'].values] = -bfdf.q.values
+
+    else:
+        if isinstance(cell_budget_file, str) or isinstance(cell_budget_file, Path):
+            cbb = bf.CellBudgetFile(cell_budget_file)
+        else:
+            cbb = cell_budget_file
+        qx = cbb.get_data(text="flow right face", kstpkper=kstpkper)[0]
+        qy = cbb.get_data(text="flow front face", kstpkper=kstpkper)[0]
+        qz = cbb.get_data(text="flow lower face", kstpkper=kstpkper)[0]
+
+    # optionally get specific discharge
+    if specific_discharge:
+        if modelgrid is None:
+            raise Exception('specific discharge calculations require a modelgrid input')
+        if headfile is None:
+            print('No headfile object provided - thickness for specific discharge calculations\n' +
+                'will be based on the model top rather than the water table')
+            thickness = modelgrid.thick
+        else:
+            if isinstance(headfile, str) or isinstance(headfile, Path):
+                hds = bf.HeadFile(headfile).get_data(kstpkper=kstpkper)
+            else:
+                hds = headsfile.get_data(kstpkper=kstpkper)
+            thickness = modelgrid.saturated_thick(array=hds)
+        
+        delr_gridp, delc_gridp = np.meshgrid(modelgrid.delr,
+                                            modelgrid.delc)
+
+        nlay, nrow, ncol = modelgrid.shape
+
+        # multiply average thickness by width (along rows or cols) to 
+        # obtain cross sectional area on the faces
+        # https://water.usgs.gov/ogw/modflow-nwt/MODFLOW-NWT-Guide/delrdelcillustration.png
+        qy_face_areas = np.tile(delr_gridp[:-1,:], (nlay,1,1)) * \
+                                ((thickness[:,:-1,:]+thickness[:,1:,:])/2)
+        # the above calculation results in a missing dimension ( only internal faces are 
+        # calculated ) so we concatenate on a repetition of the final row or column
+        qy_face_areas = np.concatenate([qy_face_areas,
+                    np.expand_dims(qy_face_areas[:,-1,:], axis=1)], axis=1)
+        
+        qx_face_areas = np.tile(delc_gridp[:,:-1], (nlay,1,1)) * \
+                                ((thickness[:,:,:-1]+thickness[:,:,1:])/2)
+        qx_face_areas = np.concatenate([qx_face_areas,
+                    np.expand_dims(qx_face_areas[:,:,-1], axis=2)], axis=2)
+
+        # z direction is simply delr * delc across all layers
+        qz_face_areas = np.tile(delr_gridp * delc_gridp, (nlay,1,1))
+
+        # divide by the areas resulting in normalized, specific discharge 
+        qx /= qx_face_areas
+        qz /= qy_face_areas
+        qx /= qz_face_areas
+        
+    return qx, qy, qz
+
 class TmrNew:
     """
     Class for general telescopic mesh refinement of a MODFLOW model. Head or
@@ -875,6 +1094,8 @@ class TmrNew:
         MODFLOW binary head output
     parent_cell_budget_file : filepath
         MODFLOW binary cell budget output
+    parent_binary_grid_file : filepath
+        MODFLOW 6 binary grid file (``*.grb``)
     define_connections : str, {'max_active_extent', 'by_layer'}
         Method for defining perimeter cells where the TMR boundary
         condition will be applied. If 'max_active_extent', the
@@ -893,6 +1114,7 @@ class TmrNew:
 
     def __init__(self, parent_model, inset_model,
                  parent_head_file=None, parent_cell_budget_file=None,
+                 parent_binary_grid_file=None,
                  boundary_type=None, inset_parent_period_mapping=None,
                  parent_start_date_time=None, source_mask=None,
                  define_connections_by='max_active_extent',
@@ -902,6 +1124,7 @@ class TmrNew:
         self.inset = inset_model
         self.parent_head_file = parent_head_file
         self.parent_cell_budget_file = parent_cell_budget_file
+        self.parent_binary_grid_file = parent_binary_grid_file
         self.define_connections_by = define_connections_by
         self.shapefile = shapefile
         self.boundary_type = boundary_type
@@ -911,13 +1134,22 @@ class TmrNew:
             self.boundary_type = 'flux'
         self.parent_start_date_time = parent_start_date_time
 
+        # Path for writing auxilliary output tables
+        # (boundary_cells.shp, etc.)
+        if hasattr(self.inset, '_tables_path'):
+            self._tables_path = Path(self.inset._tables_path)
+        else:
+            self._tables_path = Path(self.inset.model_ws) / 'tables'
+        self._tables_path.mkdir(exist_ok=True, parents=True)
+
         # properties
         self._idomain = None
         self._inset_boundary_cells = None
         self._inset_parent_period_mapping = inset_parent_period_mapping
-        self._interp_weights = None
+        self._interp_weights_heads = None
+        self._interp_weights_flux = None
         self._source_mask = source_mask
-
+        self._inset_zone_within_parent = None
 
     @property
     def idomain(self):
@@ -925,9 +1157,12 @@ class TmrNew:
         """
         if self._idomain is None:
             if self.inset.version == 'mf6':
-                self._idomain = self.inset.dis.idomain.array
+                idomain = self.inset.dis.idomain.array
+                if idomain is None:
+                    idomain = np.ones_like(self.inset.dis.botm.array, dtype=int)
             else:
-                self._idomain = self.inset.bas6.ibound.array
+                idomain = self.inset.bas6.ibound.array
+            self._idomain = idomain
         return self._idomain
 
     @property
@@ -958,21 +1193,37 @@ class TmrNew:
     def inset_parent_period_mapping(self, inset_parent_period_mapping):
         self._inset_parent_period_mapping = inset_parent_period_mapping
 
+
+
     @property
-    def interp_weights(self):
-        """For a given parent, only calculate interpolation weights
-        once to speed up re-gridding of arrays to pfl_nwt."""
-        if self._interp_weights is None:
+    def interp_weights_flux(self):
+        """For the two main directions of flux (i, j) and the four orientations of
+        inset faces to interpolate to (right.left,top,bottom
+        we can precalulate the interpolation weights of the combinations to speed up
+        interpolation"""
+        if self._interp_weights_flux is None:
+            self._interp_weights_flux = dict() # we need four flux directions for the insets
+            # x, y, z locations of parent model head values for i faces
+            ipx, ipy, ipz = self.x_iface_parent, self.y_iface_parent, self.z_iface_parent
+            # x, y, z locations of parent model head values for j faces
+            jpx, jpy, jpz = self.x_jface_parent, self.y_jface_parent, self.z_jface_parent
 
-            # x, y, z locations of parent model head values
-            px, py, pz = self.parent_xyzcellcenters
+            
+            # these are the i-direction fluxes
+            x,y,z = self.inset_boundary_cell_faces.loc[
+                self.inset_boundary_cell_faces.cellface.isin(['top','bottom'])][['xface','yface','zface']].T.values
+            self._interp_weights_flux['iface'] = interp_weights((ipx, ipy, ipz), (x, y, z), d=3)
+            assert not np.any(np.isnan(self._interp_weights_flux['iface'][1]))
 
-            # x, y, z locations of inset model boundary cells
-            x, y, z = self.inset_boundary_cells[['x', 'y', 'z']].T.values
+            # these are the j-direction fluxes
+            x,y,z = self.inset_boundary_cell_faces.loc[
+                self.inset_boundary_cell_faces.cellface.isin(['left','right'])][['xface','yface','zface']].T.values
+                
+            self._interp_weights_flux['jface'] = interp_weights((jpx, jpy, jpz), (x, y, z), d=3)
+            assert not np.any(np.isnan(self._interp_weights_flux['jface'][1]))
 
-            self._interp_weights = interp_weights((px, py, pz), (x, y, z), d=3)
-            assert not np.any(np.isnan(self._interp_weights[1]))
-        return self._interp_weights
+
+        return self._interp_weights_flux
 
     @property
     def parent_xyzcellcenters(self):
@@ -1007,17 +1258,64 @@ class TmrNew:
         return px, py, pz
 
     @property
+    def _inset_max_active_area(self):
+        """The maximum (2D) footprint of the active area within the inset
+        model grid, where each i, j location has at least 1 active cell
+        vertically, excluding any inactive holes that are surrounded by
+        active cells.
+        """
+        # get the max footprint of active cells
+        max_active_area = np.sum(self.idomain > 0, axis=0) > 0
+        # fill any holes within the max footprint
+        # including any LGR areas (that are inactive in this model)
+        # set min cluster size to 1 greater than number of inactive cells
+        # (to not allow any holes)
+        minimum_cluster_size = np.sum(max_active_area == 0) + 1
+        # find_remove_isolated_cells fills clusters of 1s with 0s
+        # to fill holes, we want to look for clusters of 0s and fill with 1s
+        to_fill = ~max_active_area
+        # pad the array to fill so that exterior inactive cells
+        # (outside the active area perimeter) aren't included
+        to_fill = np.pad(to_fill, pad_width=1, mode='reflect')
+        # invert the result to get True values for active cells and filled areas
+        filled = ~find_remove_isolated_cells(to_fill, minimum_cluster_size)
+        # de-pad the result
+        filled = filled[1:-1, 1:-1]
+        max_active_area = filled
+        return max_active_area
+
+    @property
+    def inset_zone_within_parent(self):
+        """The footprint of the inset model maximum active area footprint
+        (``TmrNew._inset_max_active_area``) within the parentmodel grid.
+        In other words, all parent cells containing one or inset
+        model cell centers within ``TmrNew._inset_max_active_area`` (ones).
+        Zeros indicate parent cells with no inset cells.
+        """
+        # get the locations of the inset model cells within _inset_max_active_area
+        x, y, z = self.inset.modelgrid.xyzcellcenters
+        x = x[self._inset_max_active_area]
+        y = y[self._inset_max_active_area]
+        pi, pj = get_ij(self.parent.modelgrid, x, y)
+        inset_zone_within_parent = np.zeros((self.parent.modelgrid.nrow,
+                                             self.parent.modelgrid.ncol), dtype=bool)
+        inset_zone_within_parent[pi, pj] = True
+        return inset_zone_within_parent
+
+
+    @property
     def _source_grid_mask(self):
         """Boolean array indicating window in parent model grid (subset of cells)
-        that encompass the pfl_nwt model domain. Used to speed up interpolation
-        of parent grid values onto pfl_nwt grid."""
+        that encompass the inset model domain. Used to speed up interpolation
+        of parent grid values onto inset grid."""
         if self._source_mask is None:
             mask = np.zeros((self.parent.modelgrid.nrow,
                              self.parent.modelgrid.ncol), dtype=bool)
-            if self.inset.parent_mask.shape == self.parent.modelgrid.xcellcenters.shape:
+            if hasattr(self.inset, 'parent_mask') and \
+                (self.inset.parent_mask.shape == self.parent.modelgrid.xcellcenters.shape):
                 mask = self.inset.parent_mask
             else:
-                x, y = np.squeeze(self.inset.bbox.exterior.coords.xy)
+                x, y = np.squeeze(self.inset.modelgrid.bbox.exterior.coords.xy)
                 pi, pj = get_ij(self.parent.modelgrid, x, y)
                 pad = 3
                 i0 = np.max([pi.min() - pad, 0])
@@ -1090,18 +1388,10 @@ class TmrNew:
         else:
             specified_bcells = None
         if not by_layer:
-            # get the max footprint of active cells
-            max_active_area = np.sum(self.idomain == 1, axis=0) > 0
-            # fill any holes within the max footprint
-            # including any LGR areas (that are inactive in this model)
-            # set min cluster size to 1 greater than number of inactive cells
-            # (to not allow any holes)
-            minimum_cluster_size = np.sum(max_active_area == 0) + 1
-            # find_remove_isolated_cells fills clusters of 1s with 0s
-            # to fill holes, we want to look for clusters of 0s and fill with 1s
-            # invert the result to get True values for active cells and filled areas
-            filled = ~find_remove_isolated_cells(~max_active_area, minimum_cluster_size)
-            max_active_area = filled.astype(int)
+
+            # attached the filled array as an attribute
+            max_active_area = self._inset_max_active_area
+
             # pad filled idomain array with zeros around the edge
             # so that perimeter connections are identified
             filled = np.pad(max_active_area, 1, constant_values=0)
@@ -1151,7 +1441,7 @@ class TmrNew:
         df['botm'] = self.inset.dis.botm.array[df.k, df.i, df.j]
         df['idomain'] = 1
         if self.inset.version == 'mf6':
-            df['idomain'] = self.inset.dis.idomain.array[df.k, df.i, df.j]
+            df['idomain'] = self.idomain[df.k, df.i, df.j]
         elif 'BAS6' in self.inset.get_package_list():
             df['idomain'] = self.inset.bas6.ibound.array[df.k, df.i, df.j]
         df = df[['k', 'i', 'j', 'cellface', 'top', 'botm', 'idomain']]
@@ -1167,7 +1457,7 @@ class TmrNew:
             df['cellid'] = list(zip(df.k, df.i, df.j))
         df['geometry'] = [geoms[cellid] for cellid in df.cellid]
         df = gp.GeoDataFrame(df, crs=self.inset.modelgrid.crs)
-        outshp = Path(self.inset._tables_path, 'boundary_cells.shp')
+        outshp = Path(self._tables_path, 'boundary_cells.shp')
         df.drop('cellid', axis=1).to_file(outshp)
         print(f"wrote {outshp}")
         print("perimeter cells took {:.2f}s\n".format(time.time() - t0))
@@ -1182,8 +1472,13 @@ class TmrNew:
 
             last_steps = {kper: kstp for kstp, kper in all_kstpkper}
 
-            # get the perimeter cells and calculate the weights
-            _ = self.interp_weights
+            # create an interpolator instance
+            cell_centers_interp = Interpolator(self.parent_xyzcellcenters,
+                                               self.inset_boundary_cells[['x', 'y', 'z']].T.values,
+                                               d=3,
+                                               source_values_mask=self._source_grid_mask)
+            # compute the weights
+            _ = cell_centers_interp.interp_weights
 
             print('\ngetting perimeter heads...')
             t0 = time.time()
@@ -1207,7 +1502,7 @@ class TmrNew:
                 parent_heads = np.pad(parent_heads, pad_width=1, mode='edge')[:, 1:-1, 1:-1]
 
                 # interpolate inset boundary heads from 3D parent head solution
-                heads = self.interpolate_values(parent_heads, method='linear')
+                heads = cell_centers_interp.interpolate(parent_heads, method='linear')
                 #heads = griddata((px, py, pz), parent_heads.ravel(),
                 #                  (x, y, z), method='linear')
 
@@ -1234,6 +1529,261 @@ class TmrNew:
             duplicates = df.duplicated(subset=['cellid'])
             df = df.loc[~duplicates, ['k', 'i', 'j', 'per', 'head']]
             print("getting perimeter heads took {:.2f}s\n".format(time.time() - t0))
+
+
+        elif self.boundary_type == 'flux':
+            check_source_files([self.parent_cell_budget_file])
+            if self.parent.version == 'mf6':
+                if self.parent_binary_grid_file is None:
+                    raise ValueError('Specified flux perimeter boundary requires a parent_binary_grid_file if parent is MF6')
+            check_source_files([self.parent_binary_grid_file])
+            fileobj = bf.CellBudgetFile(self.parent_cell_budget_file)  # , precision='single')
+            all_kstpkper = fileobj.get_kstpkper()
+
+            last_steps = {kper: kstp for kstp, kper in all_kstpkper}
+
+            print('\ngetting perimeter fluxes...')
+            t0 = time.time()
+            dfs = []
+            parent_periods = []
+
+
+            # TODO: consider refactoring to move this into its own function
+            # * handle vertical fluxes
+            # * possibly handle rotated inset with differnt angle than parent - now assuming colinear
+
+            #
+            # Handle the geometry issues for the inset
+            #
+            # need to locate edge faces (x,y,z) based on which faces is out (e.g. left, right, up, down)
+
+            # make a dataframe to store these
+            self.inset_boundary_cell_faces = self.inset_boundary_cells.copy()
+            # renaming columns to be clear now x,y,z, is for the outer cell face
+            self.inset_boundary_cell_faces.rename(columns={'x':'xface','y':'yface','z':'zface'}, inplace=True)
+            # convert x,y coordinates to model coords from world coords
+            self.inset_boundary_cell_faces.xface, self.inset_boundary_cell_faces.yface = \
+                    self.inset.modelgrid.get_local_coords(self.inset_boundary_cell_faces.xface, self.inset_boundary_cell_faces.yface)
+            # calculate the thickness to later get the area
+            self.inset_boundary_cell_faces['thickness'] = self.inset_boundary_cell_faces.top - self.inset_boundary_cell_faces.botm
+            # TODO: consider saturated thickness instead, but this would require interpolating parent heads to inset cell locations
+            # pre-seed the area as thickness to later mult by width
+            self.inset_boundary_cell_faces['face_area'] = self.inset_boundary_cell_faces['thickness'].values
+            # placeholder for interpolated values
+            self.inset_boundary_cell_faces['q_interp'] = np.nan
+            # placeholder for flux to well package
+            self.inset_boundary_cell_faces['Q'] = np.nan
+
+            # make a grid of the spacings
+            delr_gridi, delc_gridi = np.meshgrid(self.inset.modelgrid.delr, self.inset.modelgrid.delc)
+
+            for cn in self.inset_boundary_cell_faces.cellface.unique():
+                curri = self.inset_boundary_cell_faces.loc[self.inset_boundary_cell_faces.cellface==cn].i
+                currj = self.inset_boundary_cell_faces.loc[self.inset_boundary_cell_faces.cellface==cn].j
+                curr_delc = delc_gridi[curri, currj]
+                curr_delr = delr_gridi[curri, currj]
+                if cn == 'top':
+                    self.inset_boundary_cell_faces.loc[self.inset_boundary_cell_faces.cellface==cn, 'yface'] += curr_delc/2
+                    self.inset_boundary_cell_faces.loc[self.inset_boundary_cell_faces.cellface==cn, 'face_area'] *= curr_delr
+                elif cn == 'bottom':
+                    self.inset_boundary_cell_faces.loc[self.inset_boundary_cell_faces.cellface==cn, 'yface'] -= curr_delc/2
+                    self.inset_boundary_cell_faces.loc[self.inset_boundary_cell_faces.cellface==cn, 'face_area'] *= curr_delr
+                if cn == 'right':
+                    self.inset_boundary_cell_faces.loc[self.inset_boundary_cell_faces.cellface==cn, 'xface'] += curr_delr/2
+                    self.inset_boundary_cell_faces.loc[self.inset_boundary_cell_faces.cellface==cn, 'face_area'] *= curr_delc
+                elif cn == 'left':
+                    self.inset_boundary_cell_faces.loc[self.inset_boundary_cell_faces.cellface==cn, 'xface'] -= curr_delr/2
+                    self.inset_boundary_cell_faces.loc[self.inset_boundary_cell_faces.cellface==cn, 'face_area'] *= curr_delc
+
+            #
+            # Now handle the geometry issues for the parent
+            #
+            # first thicknesses (at cell centers)
+
+            parent_thick = self.parent.modelgrid.thick
+
+           
+            # make matrices of the row and column spacings
+            # NB --> trying to preserve the always seemingly
+            # backwards delr/delc definitions
+            # also note - for now, taking average thickness at a connected face
+
+
+            
+            # need XYZ locations of the center of each face for
+            # iface and jface edges (faces)
+            # NB edges are returned in model coordinates
+            xloc_edge, yloc_edge = self.parent.modelgrid.xyedges
+            nlay = self.parent.modelgrid.nlay
+            nrow = self.parent.modelgrid.nrow
+            ncol = self.parent.modelgrid.ncol
+            # throw out the left and top edges, respectively
+            xloc_edge=xloc_edge[1:]
+            yloc_edge=yloc_edge[1:]            
+            # tile out to full dimensions of the grid
+            xloc_edge = np.tile(np.atleast_2d(xloc_edge),(nlay+2,nrow,1))
+            yloc_edge = np.tile(np.atleast_2d(yloc_edge).T,(nlay+2,1,ncol))
+
+            # TODO: implement vertical fluxes
+            ''' parent_vface_areas  = np.tile(delc_grid, (nlay,1,1)) * \
+                                np.tile(delr_grid, (nlay,1,1))
+            '''
+            xloc_center, yloc_center = self.parent.modelgrid.xycenters
+            
+            # tile out to full dimensions of the grid
+            
+            xloc_center = np.tile(np.atleast_2d(xloc_center),(nlay+2,nrow,1))
+            yloc_center = np.tile(np.atleast_2d(yloc_center).T,(nlay+2,1,ncol))
+
+            # get the vertical centroids initially at cell centroids
+            zloc = (self.parent.modelgrid.top_botm[:-1,:,:] +
+                self.parent.modelgrid.top_botm[1:,:,:] ) / 2
+
+            # pad in the vertical above and below the model
+            zpadtop = np.expand_dims(self.parent.modelgrid.top_botm[0,:,:] + parent_thick[0], axis=0)
+            zpadbotm = np.expand_dims(self.parent.modelgrid.top_botm[-1,:,:] - parent_thick[-1], axis=0)
+            zloc=np.vstack([zpadtop,zloc,zpadbotm])
+            
+            # for iface, all cols, nrow-1 rows
+            self.x_iface_parent = xloc_center[:,:-1,:].ravel()
+            self.y_iface_parent = yloc_edge[:,:,:-1].ravel()
+            # need to calculate the average z location along rows
+            self.z_iface_parent = ((zloc[:,:-1,:]+zloc[:,1:,:]) / 2).ravel()
+            # for jface, all rows, ncol-1 cols
+            self.x_jface_parent = xloc_edge[:,:-1,:].ravel()
+            self.y_jface_parent = yloc_center[:,:,:-1].ravel()
+            # need to calculate the average z location along columns
+            self.z_jface_parent = ((zloc[:,:,:-1]+zloc[:,:,1:]) / 2).ravel()
+
+
+            # get the perimeter cells and calculate the weights
+            _ = self.interp_weights_flux
+
+
+            for inset_per, parent_per in self.inset_parent_period_mapping.items():
+                print(f'for stress period {inset_per}', end=', ')
+                t1 = time.time()
+                # skip getting data if parent period is already represented
+                # (heads will be reused)
+                if parent_per in parent_periods:
+                    continue
+                else:
+                    parent_periods.append(parent_per)
+                parent_kstpkper = last_steps[parent_per], parent_per
+
+                if self.parent.version == 'mf6':
+                    df = get_flowja_face(fileobj,
+                                         binary_grid_file=self.parent_binary_grid_file,
+                                         kstpkper=parent_kstpkper)
+                    if df is None:
+                        raise ValueError('No fluxes returned by get_flowja_face')
+
+                    # TODO: flux BCs
+                    # subset df to boundary cells  -- not possible a priori
+                    # get x and y direction fluxes separately -- DONE
+                    # do same for vertical fluxes -- DONE
+                    # * normalize by cell face area to make specific discharge -- DONE
+                    # * use meshgrid to locate all the cell face locations in the parent (hello xyedges from grid!) -- DONE
+                    # * need to set up inset xyz locations to interpolate to -- DONE
+                    # * branch the geometry stuff above for MF6 vs. MF2005 parent (does it matter for modelgrid object??)
+                    # * interpolate using meshgrid-derived lox and arrays of fluxes to inset correct faces  -- DONE
+                    # * consider correct face interpolation weights precalculation -- DONE
+                    # * multiply by inset face area -- DONE
+                    # * ---- verify direciton of q coming from CBC file (e.g. always m --> n???) -- yes, it's n-centric. e.g. + is into n
+                    # * verify the interpolation scheme - getting NaNs
+                    # * verify that flipping sign of q_interp below is correct (e.g. only flip left and top?)
+                    # * verify that all the xy locating works with rotated grid (!) -- DONE (working only in model coords)
+                    # for MF-2005 case, would slice arrays returned by flopy binary utility to boundary cells
+                    #    (so that mf6 and mf2005 come out the same)
+                    # *  refactor to use updated modelgrid object sat thickness calcs
+
+                    #
+                    # TODO: REPLACE THIS WITH get_qx_qy_qz
+                    # Get the vertical fluxes
+                    '''if 'kn' in df.columns and np.any(df['kn'] < df['km']):
+                        vflux = df.loc[(df['kn'] < df['km'])]
+                        vflux_array = np.zeros((vflux['km'].max(), nrow, ncol))
+                        vflux_array[vflux['kn'].values,
+                                    vflux['in'].values,
+                                    vflux['jn'].values] = vflux.q.values
+                    '''
+                    # get modelgrid row-wise (i-direction) fluxes
+                    if 'in' in df.columns and np.any(df['in'] < df['im']):
+                        iflux = df.loc[(df['in'] < df['im'])]
+                        iflux_array = np.zeros((nlay, nrow-1, ncol))
+                        iflux_array[iflux['kn'].values,
+                                    iflux['in'].values,
+                                    iflux['jn'].values] = iflux.q.values
+
+                    # get modelgrid column-wise (j-direction) fluxes
+                    if 'jn' in df.columns and np.any(df['jn'] < df['jm']):
+                        jflux = df.loc[(df['jn'] < df['jm'])]
+                        jflux_array = np.zeros((nlay, nrow, ncol-1))
+                        jflux_array[jflux['kn'].values,
+                                    jflux['in'].values,
+                                    jflux['jn'].values] = jflux.q.values
+
+
+                    # divide the flux by the area to find specific discharge along faces
+                    # NB --> padding on the top and left top ensure zeros surround
+                    q_iface = (iflux_array / parent_iface_areas)
+                    q_jface = (jflux_array / parent_jface_areas)
+
+                else:
+                    raise NotImplementedError('MODFLOW-2005 fluxes not yet supported')
+                    # TODO: implement MF2005
+                    #  *create i, j, and v face xyzq vectors as with MF6 above
+                    #   x_iface, y_iface, z_iface, q_iface .... etc.
+                # TODO: REPLACE THE ABOVE WITH get_qx_qy_qz
+
+
+                # pad the two parent flux arrays on the top and bottom
+                # so that inset cells above and below the top/bottom cell centers
+                # will be within the interpolation space
+                # TODO: consider padding or not on top, left, and "top (row-wise)"
+                # (parent x, y, z locations already contain this pad - see zloc above)
+                q_iface = np.pad(q_iface, pad_width=1, mode='edge')[:, 1:-1, 1:-1].ravel()
+                q_jface = np.pad(q_jface, pad_width=1, mode='edge')[:, 1:-1, 1:-1].ravel()
+
+
+                # TODO: refactor interpolation to use the new interpolator object
+                # interpolate q at the four different face orientations (e.g. fluxdir)
+                for fluxdir in ['top','bottom','left','right']:
+                    if fluxdir in ['top','bottom']:
+                        self.inset_boundary_cell_faces.loc[ self.inset_boundary_cell_faces.cellface==fluxdir, 'q_interp'] = \
+                            self.interpolate_flux_values(q_iface, fluxdir)
+                    if fluxdir in ['left','right']:
+                        self.inset_boundary_cell_faces.loc[ self.inset_boundary_cell_faces.cellface==fluxdir, 'q_interp'] = \
+                            self.interpolate_flux_values(q_jface, fluxdir)
+
+                # flip the sign for flux counter to the CBB convention directions of right and bottom
+                self.inset_boundary_cell_faces.loc[self.inset_boundary_cell_faces.cellface=='left', 'q_interp'] -= 1
+                self.inset_boundary_cell_faces.loc[self.inset_boundary_cell_faces.cellface=='top', 'q_interp'] -= 1
+
+                # convert specific discharge in inset cells to Q
+                self.inset_boundary_cell_faces['q'] = \
+                    self.inset_boundary_cell_faces['q_interp'] * self.inset_boundary_cell_faces['face_area']
+
+
+                # make a DataFrame of interpolated heads at perimeter cell locations
+                df = self.inset_boundary_cell_faces[['k','i','j','idomain','q']].copy()
+                df['per'] = inset_per
+
+                # boundary heads must be greater than the cell bottom
+                # and idomain > 0
+                loc = (df['q'].abs() > 0) & (df['idomain'] > 0)
+                df = df.loc[loc]
+                dfs.append(df)
+                print("took {:.2f}s".format(time.time() - t1))
+
+            df = pd.concat(dfs)
+            # drop duplicate cells (accounting for stress periods)
+            # (that may have connections in the x and y directions,
+            #  and therefore would be listed twice)
+            df['cellid'] = list(zip(df.per, df.k, df.i, df.j))
+            duplicates = df.duplicated(subset=['cellid'])
+            df = df.loc[~duplicates, ['k', 'i', 'j', 'per', 'q']]
+            print("getting perimeter fluxes took {:.2f}s\n".format(time.time() - t0))
 
         # convert to one-based and comment out header if df will be written straight to external file
         if for_external_files:
@@ -1263,7 +1813,7 @@ class TmrNew:
         """
         parent_values = source_array.flatten()[self._source_grid_mask.flatten()]
         if method == 'linear':
-            interpolated = interpolate(parent_values, *self.interp_weights,
+            interpolated = interpolate(parent_values, *self.interp_weights_heads,
                                        fill_value=None)
         elif method == 'nearest':
             # x, y, z locations of parent model head values
@@ -1272,4 +1822,46 @@ class TmrNew:
             x, y, z = self.inset_boundary_cells[['x', 'y', 'z']].T.values
             interpolated = griddata((px, py, pz), parent_values,
                                     (x, y, z), method=method)
+        return interpolated
+
+    def interpolate_flux_values(self, source_array, fluxdir, method='linear'):
+        """Interpolate values in source array onto
+        the destination model grid, using modelgrid instances
+        attached to the source and destination models.
+
+        Parameters
+        ----------
+        source_array : 1d-array
+            Flux values from parent model to be interpolated to destination grid.
+            1D numpy array of same shape as the Tmr properties of parent xyz
+        fluxdir: str ('top','bottom','left','right')
+            inset face at which flux is applied
+        method : str ('linear', 'nearest')
+            Interpolation method.
+
+        Returns
+        -------
+        interpolated : ndarray
+            3D array of interpolated values at the inset model grid locations.
+        """
+
+
+        if method == 'linear':
+            interpolated = interpolate(source_array, *self.interp_weights_flux[fluxdir],
+                                       fill_value=None)
+
+        elif method == 'nearest':
+            # x, y, z locations of inset model boundary cells
+            x, y, z = self.inset_boundary_cell_faces.loc[
+                self.inset_boundary_cell_faces.cellface== fluxdir][['xface', 'yface', 'zface']].T.values
+            if fluxdir in ['top','bottom']:
+                # x, y, z locations of parent model head values
+                px, py, pz = self.x_iface_parent, self.y_iface_parent, self.z_iface_parent
+            elif fluxdir == ['left','right']:
+                # x, y, z locations of parent model head values
+                px, py, pz = self.x_jface_parent, self.y_jface_parent, self.z_jface_parent
+                # x, y, z locations of inset model boundary cells
+
+            interpolated = griddata((px, py, pz), source_array,
+                                        (x, y, z), method=method)
         return interpolated
