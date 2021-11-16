@@ -71,5 +71,17 @@ The scripts and notebooks are found in the folder ..\notebooks\mfsetup
  ...
  
 # 4-pyEMU
- ...scripts and notebooks are found in the folder ..\notebooks\pstfrom
+pyEMU is a python module to help cope with the PEST(++) world of file formats and operations.  It support manipulating all manner of PEST(++) input and output files and also can be used for stand alone analyses as well.  pyEMU also lives on github at https://github.com/pypest/pyemu and user documentation can be found at https://pyemu.readthedocs.io/en/develop/
+
+In addition to the other prerequisites, these notebooks assumes familiarity with PEST(++).
+
+We will use pyEMU, and more specifically, the PstFrom functionality in pyEMU, to programmatically construct the PEST interface around the MODFLOW-6 flow and transport model that was built by the modflow-setup notebooks, and then perform some data assimilation and uncertainty analyses with the model.  
+
+The scripts and notebooks are found in the folder ..\notebooks\pstfrom
+
+## Excersizes
+
+1) setup_4_pestpp-ies.ipynb - construct the PEST interface
+2) test_runs_and_obsvals_and_weights.ipynb - test a few aspects of the PEST interface and also set the observation values and weights in the control file
+3) running_pestpp-ies.ipynb - actually do something fun!  Run prior Monte Carlo, as well as complete some data assimilation with groundwater levels and concentrations.
  ...
