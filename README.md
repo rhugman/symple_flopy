@@ -57,7 +57,17 @@ To keep things simple for the course, we will focus on MOFLOW 6. Once the you ar
 10)	Ex10 – creating a prediction model
  
 # 3-MFSetup
- ...scripts and notebooks are found in the folder ..\notebooks\mfsetup
+Modflow-setup is a python package that incorporates open-source geoprocessing and Flopy to generate robust and repeatable workflows from original datasets to running MODFLOW models. In this cource, we focus on preprocessing data to make it suitable for use with modflow-setup, and then create the configuration file necessary to build the model with modflow-setup. Additionally, modification using python and flopy is performed on the built model to illustrate the ability to combine modflow-setup with custom functionality.
+
+We build the same SGN model as in the flopy lesson, but rather than using an unstructured grid, we focus on a structured grid and demonstrate that simply changing the resolution in one jupyter notebook, one can completely rebuild the model at various resolutions.
+
+The scripts and notebooks are found in the folder ..\notebooks\mfsetup
+## Exercises
+1) 0_well_preprocessing.ipynb - preprocess well data specifically to prepare for model building
+2) 1_preprocessing.ipynb - more preprocessing and development of the configuration file for modflow-setup
+3) 2_build_model_from_YML.ipynb -  run modflow setup to build the model, add a couple packages manually, and run/process the model
+4) 4_add_transport.ipynb - adapt the flopy lesson version of transport to this model.
+
  ...
  
 # 4-pyEMU
