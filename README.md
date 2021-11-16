@@ -44,8 +44,7 @@ The course is broken up into several exercises. Each exercise has its own jupyte
 All exercises will employ MODFLOW 6 models. Although other MODFLOW variants are supported by Flopy, each has slightly different syntax. 
 To keep things simple for the course, we will focus on MOFLOW 6. Once the you are familiar with Flopy, it should not be too chalenging to apply the same principles to other MODFLOW variants.
 
-## What is covered
-
+## Exercises
 1)	Ex01 – build, run and postprocess a simple model
 2)	Ex02 – load and edit an existing model
 3)	Ex03 – handling scalar data
